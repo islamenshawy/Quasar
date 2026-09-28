@@ -44,6 +44,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-035 | First full `mvn verify` on a developer machine; fix compile issues | Next |
 | CMS-032 | L3 HSM integration test as JUnit (starts hsm-sim in-process) | Next |
 | CMS-036 | Run smoke test on DEV and TEST; record in TESTING.md | Next |
+| CMS-037 | GitHub repository, CI pipeline, PR template, branch protection | In progress |
 
 ## 0.5.0 — Authorization engine and ledger
 

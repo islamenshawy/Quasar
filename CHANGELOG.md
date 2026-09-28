@@ -6,7 +6,9 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- GitHub Actions CI: hsm-sim self-test, `mvn verify`, smoke-script syntax check, jar artifact per build. (CMS-037)
+- Pull request template enforcing item ID, migrations, tests, security and docs checks. (CMS-037)
 
 ## [0.4.0] - 2026-09-28
 

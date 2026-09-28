@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: hsm-sim self-test (L2)
+        run: java hsm-sim/HsmSimulator.java selftest
+
+      - name: Build and unit tests (L1)
+        run: mvn -B clean verify
+
+      - name: Smoke test script syntax
+        run: bash -n scripts/smoke-test.sh
+
+      - name: Keep the jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: cms-core-${{ github.ref_name }}
+          path: target/cms-core-*.jar
+          retention-days: 30
