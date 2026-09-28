@@ -1,0 +1,362 @@
+# Deployment Guide
+
+| | |
+|---|---|
+| Applies to | cms-core **0.4.0**, hsm-sim **1.0.0** |
+| Environments covered | DEV (developer laptop), TEST (shared test server) |
+| Owner | Development chapter, tech lead |
+| Last updated | 2026-09-28 |
+
+> UAT and production are out of scope. They need operator authentication, a real payShield, a KMS for PAN keys, and PCI controls first (see [ROADMAP](ROADMAP.md)).
+
+---
+
+## 0. Environments at a glance
+
+| | DEV | TEST |
+|---|---|---|
+| Where | Developer laptop (Windows or Linux) | Linux server (Ubuntu 22.04/24.04 LTS) |
+| HSM | hsm-sim on `localhost:1500` | hsm-sim, or real payShield 10K with **test LMK** |
+| Database | Local PostgreSQL | PostgreSQL on the server |
+| How it runs | `mvn spring-boot:run` or `java -jar` | `systemd` services |
+| Spring profile | `dev` | `test` (you create `application-test.yml`, see §9.3) |
+| Data | Test data only | Test data only. **Never real cards, PANs or keys.** |
+
+---
+
+## 1. What to install
+
+| Tool | Version | Why |
+|---|---|---|
+| Git | any recent | Version control |
+| JDK | **21** (Eclipse Temurin recommended) | Runs the CMS and hsm-sim |
+| Maven | 3.9+ (3.8 works) | Builds the CMS |
+| PostgreSQL | **15 or 16** | CMS database |
+| curl, jq | any | Smoke test script |
+| Optional: DBeaver or pgAdmin | any | Browse the database |
+| Optional: Postman | any | Manual API testing |
+
+### 1.1 Ubuntu 22.04 / 24.04
+
+```bash
+sudo apt update
+sudo apt install -y git openjdk-21-jdk maven postgresql postgresql-contrib curl jq unzip
+java -version     # must show 21
+mvn -v            # must show Java 21 as the runtime
+psql --version
+```
+
+### 1.2 Windows 10/11
+
+Install the following (winget IDs may change; the official download pages always work):
+
+```powershell
+winget install --id Git.Git
+winget install --id EclipseAdoptium.Temurin.21.JDK
+winget install --id jqlang.jq
+```
+
+- **Maven:** download the binary zip from maven.apache.org, extract to `C:\tools\maven`, add `C:\tools\maven\bin` to `PATH`.
+- **PostgreSQL 16:** use the installer from postgresql.org. Remember the `postgres` password you set.
+- Set `JAVA_HOME` to the Temurin 21 folder, then open a **new** terminal and check `java -version` and `mvn -v`.
+- Run the `.sh` scripts from **Git Bash**, which is installed with Git.
+
+---
+
+## 2. Get the code
+
+```bash
+unzip cms.zip && cd cms      # or: git clone <your-repo-url> cms && cd cms
+git log --oneline -1         # confirm you are on the expected version
+git tag                      # release tags, e.g. v0.4.0
+```
+
+Project layout:
+
+```
+cms/
+├── pom.xml                      build, version
+├── CHANGELOG.md                 what changed in each version
+├── CONTRIBUTING.md              branching, commits, versioning, DB migration rules
+├── docs/                        DEPLOYMENT, TESTING, DECISIONS, ROADMAP
+├── hsm-sim/HsmSimulator.java    payShield simulator (single file, no build)
+├── scripts/                     seed-dev.sql, smoke-test.sh
+└── src/main/...                 CMS source, config, Flyway migrations, issuance screen
+```
+
+---
+
+## 3. Create the database
+
+Linux:
+
+```bash
+sudo -u postgres psql <<'SQL'
+CREATE USER cms WITH PASSWORD 'change-me';
+CREATE DATABASE cms OWNER cms;
+SQL
+```
+
+Windows: open **SQL Shell (psql)** as `postgres` and run the same two statements.
+
+Check the connection:
+
+```bash
+psql -h localhost -U cms -d cms -c "select version();"
+```
+
+The tables are **not** created by hand. Flyway creates and upgrades them automatically when the CMS starts (§6).
+
+---
+
+## 4. Configure
+
+The CMS reads configuration from `application.yml`, from the active profile file (`application-dev.yml`), and from environment variables. Environment variables always win.
+
+| Variable | Required | DEV value | Notes |
+|---|---|---|---|
+| `SPRING_PROFILES_ACTIVE` | yes | `dev` | Selects `application-dev.yml` |
+| `CMS_DB_PASSWORD` | yes | your DB password | |
+| `SPRING_DATASOURCE_URL` | no | default `jdbc:postgresql://localhost:5432/cms` | Override for another host |
+| `CMS_PAN_ENC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
+| `CMS_PAN_HMAC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
+| `CMS_HSM_HOST` / `CMS_HSM_PORT` | no | `localhost` / `1500` | Point at the real payShield later |
+
+> **Important:** the PAN keys encrypt card numbers at rest. If you change them, existing cards can no longer be decrypted. On TEST, generate them once (`openssl rand -base64 32`), store them in the env file (§9.2), and never rotate them casually.
+
+Linux (DEV):
+
+```bash
+export SPRING_PROFILES_ACTIVE=dev
+export CMS_DB_PASSWORD=change-me
+```
+
+Windows PowerShell (DEV):
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE="dev"
+$env:CMS_DB_PASSWORD="change-me"
+```
+
+---
+
+## 5. Start the HSM simulator
+
+In its own terminal:
+
+```bash
+cd hsm-sim
+java HsmSimulator.java selftest      # must end with: SELFTEST PASSED
+java HsmSimulator.java serve 1500 4  # port 1500, header length 4
+```
+
+Expected output: `hsm-sim 1.0.0 listening on 1500, header length 4, LMK check EB7A8DF91182DBE2`. Leave it running; every HSM command is logged in this window.
+
+Useful options:
+
+| Env var | Example | Effect |
+|---|---|---|
+| `SIM_DELAY_MS` | `3000` | Slow every response (tests CMS timeouts) |
+| `SIM_FAIL` | `EC:15,CW:10` | Force an error code per command |
+| `SIM_LMK` | 32 hex | Different simulated LMK. **Regenerate the seed if you change it.** |
+
+---
+
+## 6. Build and run the CMS
+
+```bash
+mvn clean verify        # compile + unit tests + build jar with version info
+java -jar target/cms-core-0.4.0.jar
+# or during development: mvn spring-boot:run
+```
+
+On first start, Flyway creates the schema (migrations V1 to V3). The log shows `Successfully applied 3 migrations`, then `Started CmsApplication`.
+
+The CMS starts even if the HSM is down, because HSM connections are opened on first use. Check the HSM state with the health endpoint (§8).
+
+---
+
+## 7. Load dev seed data
+
+Run this after the first start, so the tables exist:
+
+```bash
+psql -h localhost -U cms -d cms -f scripts/seed-dev.sql
+```
+
+It loads:
+- **Test keys** for hsm-sim: ZMK and ZPK for the corehost, ZPK for the kiosk, PVK and CVK. The clear values are printed as comments in the file.
+- **Two products:** `P01` Prepaid Classic (PREPAID/PAYROLL accounts × MASS/PAYROLL/STAFF segments) and `P02` Debit Gold (CURRENT/SAVINGS accounts × PREMIUM/STAFF segments).
+
+---
+
+## 8. Verify the deployment
+
+Run these checks in order. Each must pass before moving to the next.
+
+| # | Check | Command | Expected |
+|---|---|---|---|
+| 1 | Version | `curl localhost:8080/api/version` | `"version":"0.4.0"` |
+| 2 | HSM | `curl localhost:8080/api/admin/hsm/health` | `"status":"UP"`, `lmkCheckValue` = `EB7A8DF91182DBE2` (sim default) |
+| 3 | Screen | Open `http://localhost:8080/issuance.html` | Segments and account types load in the dropdowns |
+| 4 | Smoke test | `./scripts/smoke-test.sh` | `15 passed, 0 failed` |
+
+If all four pass, the deployment is good. Record the result in [TESTING.md](TESTING.md) §6.
+
+---
+
+## 9. Deploy to the TEST server (Linux, systemd)
+
+### 9.1 Directories and user
+
+```bash
+sudo useradd --system --home /opt/cms --shell /usr/sbin/nologin cms
+sudo mkdir -p /opt/cms/releases /opt/cms/hsm-sim /opt/cms/config /opt/cms/backup /etc/cms
+sudo chown -R cms:cms /opt/cms
+```
+
+### 9.2 Environment file (secrets)
+
+`/etc/cms/cms.env`, owned by root, mode `600`:
+
+```bash
+SPRING_PROFILES_ACTIVE=test
+CMS_DB_PASSWORD=<db password>
+CMS_PAN_ENC_KEY=<openssl rand -base64 32, generated ONCE>
+CMS_PAN_HMAC_KEY=<openssl rand -base64 32, generated ONCE>
+```
+
+```bash
+sudo chmod 600 /etc/cms/cms.env
+```
+
+### 9.3 TEST profile
+
+Create `src/main/resources/application-test.yml` before building, or place it at `/opt/cms/config/application-test.yml`:
+
+```yaml
+cms:
+  hsm:
+    host: localhost        # hsm-sim on the same server, or the payShield IP
+    port: 1500
+    header-length: 4
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/cms
+```
+
+### 9.4 Install the release
+
+```bash
+VERSION=0.4.0
+sudo cp target/cms-core-$VERSION.jar /opt/cms/releases/
+sudo ln -sfn /opt/cms/releases/cms-core-$VERSION.jar /opt/cms/cms-core.jar
+sudo cp hsm-sim/HsmSimulator.java /opt/cms/hsm-sim/
+sudo chown -R cms:cms /opt/cms
+```
+
+Keeping every jar in `releases/` and switching a symlink makes rollback a one-line operation.
+
+### 9.5 systemd services
+
+`/etc/systemd/system/hsm-sim.service`:
+
+```ini
+[Unit]
+Description=payShield simulator (TEST ONLY)
+After=network.target
+
+[Service]
+User=cms
+WorkingDirectory=/opt/cms/hsm-sim
+ExecStart=/usr/bin/java HsmSimulator.java serve 1500 4
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/cms.service`:
+
+```ini
+[Unit]
+Description=CMS core
+After=network.target postgresql.service hsm-sim.service
+
+[Service]
+User=cms
+WorkingDirectory=/opt/cms
+EnvironmentFile=/etc/cms/cms.env
+ExecStart=/usr/bin/java -Xms512m -Xmx1g -jar /opt/cms/cms-core.jar --spring.config.additional-location=optional:/opt/cms/config/
+Restart=on-failure
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now hsm-sim cms
+sudo journalctl -u cms -f          # follow logs
+```
+
+Then run the checks in §8 against the server.
+
+### 9.6 Network
+
+| Port | Service | Open to |
+|---|---|---|
+| 8080 | CMS (screen, admin API, Dexxis API) | Test users' subnet and the Dexxis server **only** |
+| 1500 | hsm-sim | localhost only (do not expose) |
+| 5432 | PostgreSQL | localhost only |
+
+```bash
+sudo ufw allow from <test-subnet> to any port 8080 proto tcp
+```
+
+### 9.7 Upgrade procedure (every new version)
+
+1. Read the version's entry in `CHANGELOG.md`, especially **Migrations** and **Breaking**.
+2. Back up the database:
+   `sudo -u postgres pg_dump -Fc cms | sudo tee /opt/cms/backup/cms-$(date +%F-%H%M)-before-<new-version>.dump > /dev/null`
+3. Copy the new jar to `releases/` and repoint the symlink (§9.4).
+4. Restart: `sudo systemctl restart cms`. Flyway applies any new migrations.
+5. Verify with §8: the version must show the new number, and the smoke test must pass.
+6. Record the deployment in [TESTING.md](TESTING.md) §6.
+
+### 9.8 Rollback
+
+- **No new migrations in the release:** repoint the symlink to the previous jar, then restart.
+- **New migrations were applied:** Flyway is forward-only. Stop the CMS, restore the backup from step 2 (`sudo -u postgres pg_restore --clean -d cms <file>`), repoint the symlink, start, and verify.
+
+---
+
+## 10. Switching from hsm-sim to the real payShield 10K
+
+The simulator uses the **same clear test keys** you will load into the payShield, so PVVs and CVVs stay identical. Test cards created on the simulator keep working after the switch.
+
+1. **payShield host settings:** note the TCP host port, the **message header length**, and the **LMK type** (variant or key block). The CMS client currently supports **variant LMK** key tokens (`U` + 32 hex); a key-block LMK needs a client update (roadmap item CMS-043).
+2. **Import the test keys** from the clear values in `scripts/seed-dev.sql`, using a **test LMK** only, your normal key ceremony method, and dual control even in test so the procedure is rehearsed. Import them as the right key types: ZMK, ZPK, PVK and CVK.
+3. **Check the KCVs.** The KCV the payShield reports for each key must equal the KCV in the seed file. If one differs, stop: the key was entered wrongly.
+4. **Update `hsm_key`** with the payShield cryptograms (keep the key names; update `key_under_lmk` and `kcv`).
+5. **Point the CMS** at the HSM (`CMS_HSM_HOST`, `CMS_HSM_PORT`, header length) and restart.
+6. **Verify:** health shows the real LMK check value; then run the smoke test. `pinblock` in the smoke test uses the clear kiosk ZPK, so it still works against the real HSM.
+7. **Verify command layouts:** any `HSM_ERROR` with an error code points to a field layout difference for your firmware. Compare with the payShield Host Command Reference and log the issue in the ROADMAP.
+
+---
+
+## 11. Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `mvn` uses Java 17 or older | Wrong `JAVA_HOME` | Point `JAVA_HOME` to JDK 21, open a new terminal |
+| `password authentication failed for user "cms"` | Wrong `CMS_DB_PASSWORD` | Check the variable and the DB user password |
+| `Validate failed: Migrations have failed validation` | An applied migration file was edited | Never edit applied migrations (see CONTRIBUTING). Restore the original file. |
+| Health shows `DOWN` / `cannot connect to HSM` | Simulator not running, wrong port | Start hsm-sim, check `cms.hsm.port` |
+| `HSM header mismatch` | Header length differs between CMS and HSM | Align `header-length` with the HSM setting |
+| `HSM_ERROR ... / 15` | Input data error, wrong field layout or key token | Check the key rows in `hsm_key`; on a real HSM, check the command layout |
+| `KEY_MISSING` | Seed not loaded or key name differs | Run `seed-dev.sql`; check product key names |
+| `PRODUCT_NOT_ELIGIBLE` | No eligibility row for that account type × segment | Add a row to `product_eligibility` |
+| Existing cards fail with `PAN decryption failed` | PAN keys changed | Restore the original `CMS_PAN_ENC_KEY` |
+| Screen dropdowns empty | CMS not reachable, or reference tables empty | Check `/api/admin/reference`; migrations must have run |

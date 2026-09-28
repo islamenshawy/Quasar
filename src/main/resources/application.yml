@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: cms-core
+  datasource:
+    url: jdbc:postgresql://localhost:5432/cms
+    username: cms
+    password: ${CMS_DB_PASSWORD}
+  flyway:
+    enabled: true
+
+cms:
+  hsm:
+    host: 10.0.0.50          # payShield 10K host port IP (test)
+    port: 1500
+    header-length: 4          # must match payShield host settings
+    pool-size: 4
+    connect-timeout-ms: 3000
+    read-timeout-ms: 2000
+    borrow-timeout-ms: 1000
+  security:
+    # TEST ONLY. Base64 256-bit keys. In production these come from a KMS/HSM, never from config.
+    pan-enc-key: ${CMS_PAN_ENC_KEY}
+    pan-hmac-key: ${CMS_PAN_HMAC_KEY}
+  keys:
+    kiosk-zpk-name: ZPK_KIOSK     # ZPK under which the kiosk EPP sends PIN blocks
+    corehost-zpk-name: ZPK_COREHOST
+  issuance:
+    pin-block-format: ISO_0

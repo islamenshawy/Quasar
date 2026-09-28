@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card issuance</title>
+<style>
+  :root{
+    --paper:#F3F5F8; --panel:#FFFFFF; --ink:#18212C; --muted:#5A6573; --line:#D3D9E1;
+    --action:#0E5A6E; --action-ink:#FFFFFF; --ok:#1E7446; --err:#A8261D;
+    --card-a:#12324A; --card-b:#1F5B6E;
+    --font: "IBM Plex Sans","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono: "IBM Plex Mono",Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 var(--font)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:14px 28px;
+         background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header label{font-size:13px;color:var(--muted)}
+  header input{width:140px;margin-left:6px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:28px;padding:28px;max-width:1240px;margin:0 auto}
+  @media (max-width:980px){main{grid-template-columns:1fr}.side{order:-1}}
+
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:20px 22px;margin-bottom:18px}
+  .step.locked{opacity:.45;pointer-events:none}
+  .step h2{display:flex;gap:12px;align-items:baseline;font-size:17px;margin:0 0 14px;font-weight:600}
+  .step h2 .n{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;
+              background:var(--ink);color:#fff;font-size:13px}
+  .step.done h2 .n{background:var(--ok)}
+  .chosen{font-size:14px;color:var(--muted);margin:-6px 0 12px}
+  .chosen b{color:var(--ink);font-weight:600}
+
+  .tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+  .tabs button{background:none;border:0;padding:8px 12px;cursor:pointer;color:var(--muted);
+               border-bottom:2px solid transparent;font:inherit}
+  .tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--action);font-weight:600}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px 16px}
+  label.f{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:4px}
+  input,select{font:inherit;color:var(--ink);padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:#fff}
+  input:focus,select:focus,button:focus-visible{outline:2px solid var(--action);outline-offset:1px}
+  .row{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  button.primary{background:var(--action);color:var(--action-ink);border:0;border-radius:4px;padding:9px 16px;
+                 font:inherit;font-weight:600;cursor:pointer}
+  button.secondary{background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px 14px;
+                   font:inherit;cursor:pointer}
+  button:disabled{opacity:.5;cursor:not-allowed}
+
+  table{width:100%;border-collapse:collapse;font-size:14px;margin-top:10px}
+  th{text-align:left;font-weight:600;color:var(--muted);border-bottom:1px solid var(--line);padding:6px 8px}
+  td{border-bottom:1px solid var(--line);padding:7px 8px}
+  tr.pick{cursor:pointer} tr.pick:hover td{background:#EEF4F6}
+  tr.sel td{background:#E1EEF2}
+  .msg{margin-top:10px;font-size:14px}
+  .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
+
+  /* Live card preview: the one bold element on the page */
+  .side{position:sticky;top:20px;align-self:start}
+  .card{aspect-ratio:85.6/53.98;border-radius:14px;padding:20px 22px;color:#EAF2F5;position:relative;
+        background:linear-gradient(135deg,var(--card-a),var(--card-b));overflow:hidden}
+  .card[data-tier=GOLD]{--card-a:#5B4514;--card-b:#9C7A2B}
+  .card[data-tier=PLATINUM]{--card-a:#3A3F46;--card-b:#7B838C}
+  .card .scheme{position:absolute;top:18px;right:22px;font-weight:600;letter-spacing:.04em}
+  .card .chip{width:44px;height:33px;border-radius:6px;background:linear-gradient(135deg,#D7C27A,#A88D3E);margin-top:28px}
+  .card .pan{font:500 21px/1 var(--mono);letter-spacing:.08em;margin-top:18px;text-shadow:0 1px 0 rgba(0,0,0,.35)}
+  .card .bottom{display:flex;justify-content:space-between;margin-top:14px;font-family:var(--mono);font-size:14px}
+  .card .tier{position:absolute;top:18px;left:22px;font-size:13px;opacity:.85}
+  .summary{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;margin-top:14px;font-size:14px}
+  .summary dl{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;margin:0}
+  .summary dt{color:var(--muted)}
+  .issued{border:2px solid var(--ok);border-radius:6px;padding:14px 16px;margin-top:14px;background:#F1F8F4}
+  .issued .full{font:600 20px var(--mono);letter-spacing:.06em;margin:6px 0}
+  .issued p{margin:4px 0;font-size:13px;color:var(--muted)}
+  @media (prefers-reduced-motion:no-preference){.card{transition:background .4s}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Card issuance</h1>
+  <label>Operator <input id="operator" value="op01" aria-label="Operator ID"></label>
+</header>
+
+<main>
+  <div>
+    <!-- Step 1 -->
+    <section class="step" id="s1">
+      <h2><span class="n">1</span>Customer</h2>
+      <div class="chosen" id="s1chosen" hidden></div>
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="find">Find existing</button>
+        <button role="tab" aria-selected="false" data-tab="new">New customer</button>
+      </div>
+      <div data-panel="find">
+        <div class="row" style="margin-top:0">
+          <input id="q" placeholder="CIF, name, national ID or mobile" style="flex:1;min-width:220px">
+          <button class="secondary" id="searchBtn">Search</button>
+        </div>
+        <table id="custTable" hidden><thead><tr><th>CIF</th><th>Name</th><th>Segment</th><th>National ID</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div data-panel="new" hidden>
+        <div class="grid">
+          <label class="f">Customer reference (CIF)<input id="c_ref"></label>
+          <label class="f">Customer type<select id="c_type"><option>INDIVIDUAL</option><option>CORPORATE</option></select></label>
+          <label class="f">Segment<select id="c_seg"></select></label>
+          <label class="f">Full name<input id="c_name"></label>
+          <label class="f">Name on card (max 26)<input id="c_emb" maxlength="26"></label>
+          <label class="f">National ID<input id="c_nid"></label>
+          <label class="f">Date of birth<input id="c_dob" type="date"></label>
+          <label class="f">Mobile<input id="c_mob"></label>
+          <label class="f">Email<input id="c_mail" type="email"></label>
+          <label class="f" style="grid-column:1/-1">Address<input id="c_addr"></label>
+        </div>
+        <div class="row"><button class="primary" id="createCustBtn">Create customer</button></div>
+      </div>
+      <div class="msg" id="s1msg" role="status"></div>
+    </section>
+
+    <!-- Step 2 -->
+    <section class="step locked" id="s2">
+      <h2><span class="n">2</span>Account</h2>
+      <div class="chosen" id="s2chosen" hidden></div>
+      <table id="acctTable" hidden><thead><tr><th>Account</th><th>Type</th><th>Currency</th><th>Status</th></tr></thead><tbody></tbody></table>
+      <div class="row">
+        <select id="a_type" aria-label="Account type"></select>
+        <select id="a_cur" aria-label="Currency"></select>
+        <button class="secondary" id="openAcctBtn">Open new account</button>
+      </div>
+      <div class="msg" id="s2msg" role="status"></div>
+    </section>
+
+    <!-- Step 3 -->
+    <section class="step locked" id="s3">
+      <h2><span class="n">3</span>Card</h2>
+      <div class="grid">
+        <label class="f">Card product<select id="p_code"></select></label>
+        <label class="f">Name on card<input id="p_emb" maxlength="26"></label>
+        <label class="f">Branch ID<input id="p_branch" value="BR001"></label>
+      </div>
+      <div class="row"><button class="primary" id="issueBtn">Issue card</button></div>
+      <table id="cardTable" hidden><thead><tr><th>Card</th><th>Product</th><th>Expiry</th><th>Status</th></tr></thead><tbody></tbody></table>
+      <div class="msg" id="s3msg" role="status"></div>
+    </section>
+  </div>
+
+  <aside class="side">
+    <div class="card" id="card" data-tier="CLASSIC" aria-label="Card preview">
+      <div class="tier" id="cvTier">Select a product</div>
+      <div class="scheme" id="cvScheme"></div>
+      <div class="chip"></div>
+      <div class="pan" id="cvPan">•••• •••• •••• ••••</div>
+      <div class="bottom"><span id="cvName">CARDHOLDER NAME</span><span id="cvExp">MM/YY</span></div>
+    </div>
+    <div class="summary"><dl id="summary">
+      <dt>Customer</dt><dd id="smCust">Not selected</dd>
+      <dt>Segment</dt><dd id="smSeg">-</dd>
+      <dt>Account</dt><dd id="smAcct">Not selected</dd>
+      <dt>Account type</dt><dd id="smAType">-</dd>
+    </dl></div>
+    <div class="issued" id="issued" hidden>
+      <strong>Card issued. Enter this number in Dexxis to print.</strong>
+      <div class="full" id="issuedPan"></div>
+      <div class="row" style="margin-top:4px">
+        <button class="secondary" id="copyBtn">Copy card number</button>
+        <button class="secondary" id="hideBtn">Hide number</button>
+      </div>
+      <p>Shown once. The card stays pending until Dexxis prints it and the PIN is set at the kiosk.</p>
+    </div>
+  </aside>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const state = { customer:null, account:null, products:[] };
+
+async function api(method, path, body){
+  const res = await fetch('/api/admin' + path, {
+    method, headers:{'Content-Type':'application/json','X-Operator':$('operator').value || 'unknown'},
+    body: body ? JSON.stringify(body) : undefined });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.message) || ('Request failed (' + res.status + ')'));
+  return data;
+}
+function msg(id, text, ok){ const m=$(id); m.textContent=text||''; m.className='msg '+(ok?'ok':'err'); }
+function fill(sel, items, valueKey='code', labelFn=i=>i.code+' – '+i.name){
+  sel.innerHTML=''; items.forEach(i=>{const o=document.createElement('option');o.value=i[valueKey];o.textContent=labelFn(i);sel.appendChild(o);});
+}
+function rows(table, items, cols, onPick){
+  const tb=table.querySelector('tbody'); tb.innerHTML='';
+  items.forEach(it=>{ const tr=document.createElement('tr');
+    cols.forEach(c=>{const td=document.createElement('td');td.textContent=it[c]??'';tr.appendChild(td);});
+    if(onPick){tr.className='pick';tr.tabIndex=0;
+      const pick=()=>{tb.querySelectorAll('tr').forEach(r=>r.classList.remove('sel'));tr.classList.add('sel');onPick(it);};
+      tr.onclick=pick; tr.onkeydown=e=>{if(e.key==='Enter')pick();};}
+    tb.appendChild(tr); });
+  table.hidden = items.length===0;
+}
+function lock(id, locked){ $(id).classList.toggle('locked', locked); }
+
+// ---------- reference data ----------
+api('GET','/reference').then(r=>{
+  fill($('c_seg'), r.segments);
+  fill($('a_type'), r.accountTypes);
+  fill($('a_cur'), r.currencies, 'code', i=>i.code);
+}).catch(e=>msg('s1msg','Could not load reference data: '+e.message));
+
+// ---------- step 1 ----------
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-selected', x===b));
+  document.querySelectorAll('[data-panel]').forEach(p=>p.hidden = p.dataset.panel!==b.dataset.tab);
+});
+$('searchBtn').onclick = async ()=>{
+  try{ const list = await api('GET','/customers?q='+encodeURIComponent($('q').value));
+    rows($('custTable'), list, ['customerRef','fullName','segmentCode','nationalId'], selectCustomer);
+    msg('s1msg', list.length? '' : 'No customers match. Try another term or create a new customer.');
+  }catch(e){ msg('s1msg', e.message); }
+};
+$('q').onkeydown = e=>{ if(e.key==='Enter') $('searchBtn').click(); };
+$('createCustBtn').onclick = async ()=>{
+  try{ const c = await api('POST','/customers',{
+      customerRef:$('c_ref').value, customerType:$('c_type').value, segmentCode:$('c_seg').value,
+      fullName:$('c_name').value, embossingName:$('c_emb').value, nationalId:$('c_nid').value||null,
+      dateOfBirth:$('c_dob').value||null, mobile:$('c_mob').value||null, email:$('c_mail').value||null,
+      address:$('c_addr').value||null });
+    msg('s1msg','Customer created.',true); selectCustomer(c);
+  }catch(e){ msg('s1msg', e.message); }
+};
+$('c_name').oninput = ()=>{ if(!$('c_emb').dataset.touched) $('c_emb').value=$('c_name').value.toUpperCase().slice(0,26); };
+$('c_emb').oninput = ()=>{ $('c_emb').dataset.touched='1'; };
+
+async function selectCustomer(c){
+  state.customer=c; state.account=null;
+  $('s1').classList.add('done');
+  $('s1chosen').hidden=false;
+  $('s1chosen').innerHTML=''; const b=document.createElement('b'); b.textContent=c.fullName+' ('+c.customerRef+')';
+  $('s1chosen').append('Selected: ', b, ' · segment '+c.segmentCode);
+  $('smCust').textContent=c.fullName+' ('+c.customerRef+')'; $('smSeg').textContent=c.segmentCode;
+  $('smAcct').textContent='Not selected'; $('smAType').textContent='-';
+  $('p_emb').value=c.embossingName; $('cvName').textContent=c.embossingName;
+  lock('s2',false); lock('s3',true); $('s2').classList.remove('done'); $('s2chosen').hidden=true;
+  await loadAccounts();
+}
+
+// ---------- step 2 ----------
+async function loadAccounts(){
+  try{ const list = await api('GET','/customers/'+state.customer.id+'/accounts');
+    rows($('acctTable'), list, ['accountNumber','accountTypeCode','currencyCode','status'], selectAccount);
+    msg('s2msg', list.length? 'Pick an account, or open a new one.' : 'No accounts yet. Open one to continue.', true);
+  }catch(e){ msg('s2msg', e.message); }
+}
+$('openAcctBtn').onclick = async ()=>{
+  try{ const a = await api('POST','/customers/'+state.customer.id+'/accounts',
+        {accountTypeCode:$('a_type').value, currencyCode:$('a_cur').value});
+    await loadAccounts(); selectAccount(a); msg('s2msg','Account '+a.accountNumber+' opened.',true);
+  }catch(e){ msg('s2msg', e.message); }
+};
+async function selectAccount(a){
+  state.account=a; $('s2').classList.add('done');
+  $('s2chosen').hidden=false; $('s2chosen').textContent='Selected: '+a.accountNumber+' · '+a.accountTypeCode+' · '+a.currencyCode;
+  $('smAcct').textContent=a.accountNumber; $('smAType').textContent=a.accountTypeCode;
+  lock('s3',false); $('issued').hidden=true;
+  try{ state.products = await api('GET','/accounts/'+a.id+'/eligible-products');
+    fill($('p_code'), state.products, 'code', p=>p.name+' ('+p.scheme+' '+p.cardTier+')');
+    $('issueBtn').disabled = state.products.length===0;
+    msg('s3msg', state.products.length? '' :
+      'No card product is set up for a '+a.accountTypeCode+' account in segment '+state.customer.segmentCode+'. Ask an administrator to add eligibility.');
+    preview(); await loadCards();
+  }catch(e){ msg('s3msg', e.message); }
+}
+
+// ---------- step 3 ----------
+function preview(){
+  const p = state.products.find(x=>x.code===$('p_code').value);
+  $('card').dataset.tier = p ? p.cardTier : 'CLASSIC';
+  $('cvTier').textContent = p ? p.name : 'Select a product';
+  $('cvScheme').textContent = p ? p.scheme : '';
+  $('cvName').textContent = ($('p_emb').value || 'CARDHOLDER NAME').toUpperCase();
+}
+$('p_code').onchange = preview; $('p_emb').oninput = preview;
+
+async function loadCards(){
+  const list = await api('GET','/accounts/'+state.account.id+'/cards');
+  rows($('cardTable'), list, ['maskedPan','productCode','expiryYYMM','status']);
+}
+$('issueBtn').onclick = async ()=>{
+  $('issueBtn').disabled=true;
+  try{ const c = await api('POST','/accounts/'+state.account.id+'/cards',
+        {productCode:$('p_code').value, embossingName:$('p_emb').value, branchId:$('p_branch').value});
+    $('cvPan').textContent = c.maskedPan.replace(/(.{4})/g,'$1 ').trim();
+    $('cvExp').textContent = c.expiryYYMM.slice(2)+'/'+c.expiryYYMM.slice(0,2);
+    $('issuedPan').textContent = c.pan.replace(/(.{4})/g,'$1 ').trim();
+    $('issued').hidden=false;
+    msg('s3msg','Card issued and waiting for print.',true);
+    await loadCards();
+  }catch(e){ msg('s3msg', e.message); }
+  finally{ $('issueBtn').disabled=false; }
+};
+$('copyBtn').onclick = ()=> navigator.clipboard.writeText($('issuedPan').textContent.replace(/\s/g,''))
+  .then(()=>msg('s3msg','Card number copied.',true));
+$('hideBtn').onclick = ()=>{ $('issuedPan').textContent=''; $('issued').hidden=true; };
+</script>
+</body>
+</html>

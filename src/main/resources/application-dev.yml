@@ -1,0 +1,13 @@
+# Profile "dev": laptop / test server with hsm-sim. Activate with SPRING_PROFILES_ACTIVE=dev
+cms:
+  hsm:
+    host: localhost
+    port: 1500
+    header-length: 4
+  security:
+    # DEV ONLY fixed keys so restarts can still decrypt stored PANs. Never use outside dev.
+    pan-enc-key: ${CMS_PAN_ENC_KEY:ZGV2LW9ubHktcGFuLWVuYy1rZXktMzItYnl0ZXMtISE=}
+    pan-hmac-key: ${CMS_PAN_HMAC_KEY:ZGV2LW9ubHktcGFuLWhtYWMta2V5LTMyLWJ5dGVzLSE=}
+logging:
+  level:
+    com.cms: DEBUG
