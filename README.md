@@ -28,6 +28,7 @@ ATM ──> Corehost ──BASE24──> CMS           Balance inquiry / Withdra
 | [docs/TESTING.md](docs/TESTING.md) | Testing a build; test data; recording a test run |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What's done, next and blocked, and which inputs are needed |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Why things are built the way they are |
+| [docs/GITHUB.md](docs/GITHUB.md) | Publishing to GitHub, branch protection, issues, releases |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branching, commits, versioning, migrations, Definition of Done |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each version |
 
