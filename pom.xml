@@ -20,6 +20,10 @@
     <properties>
         <java.version>21</java.version>
         <jpos.version>2.1.9</jpos.version> <!-- verify latest 2.1.x -->
+        <!-- Admin console (ui/). Built with its own Node into target/node; -DskipUi to build the backend only. -->
+        <node.version>v24.14.0</node.version>
+        <skipUi>false</skipUi>
+        <npm.install>install --no-audit --no-fund</npm.install>
     </properties>
 
     <repositories>
@@ -85,6 +89,51 @@
                 <executions>
                     <!-- writes META-INF/build-info.properties (version, build time) -->
                     <execution><goals><goal>build-info</goal></goals></execution>
+                </executions>
+            </plugin>
+
+            <!-- Admin console: npm ci + vite build in ui/, output copied to static/ in the jar -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>2.0.2</version>
+                <configuration>
+                    <workingDirectory>ui</workingDirectory>
+                    <installDirectory>${project.build.directory}</installDirectory>
+                    <skip>${skipUi}</skip>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node</id>
+                        <goals><goal>install-node-and-npm</goal></goals>
+                        <configuration><nodeVersion>${node.version}</nodeVersion></configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-install</id>
+                        <goals><goal>npm</goal></goals>
+                        <!-- install (not ci): ci wipes node_modules first, which fails under OneDrive file locks. The lockfile still pins versions. -->
+                        <configuration><arguments>${npm.install}</arguments></configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <goals><goal>npm</goal></goals>
+                        <configuration><arguments>run build</arguments></configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-console</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <skip>${skipUi}</skip>
+                            <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+                            <resources><resource><directory>ui/dist</directory></resource></resources>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
         </plugins>

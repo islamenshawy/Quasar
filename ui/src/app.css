@@ -1,0 +1,23 @@
+body {
+  font-family: "IBM Plex Sans", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+body.body--light { background: #f3f5f8; }
+
+.mono { font-family: "IBM Plex Mono", Consolas, "Liberation Mono", monospace; }
+.page { max-width: 1400px; margin: 0 auto; }
+.muted { opacity: .7; }
+.clickable-rows tbody tr { cursor: pointer; }
+.inactive-row { opacity: .55; }
+
+/* definition lists on detail pages */
+.dl { display: grid; grid-template-columns: minmax(120px, 34%) 1fr; gap: 6px 12px; margin: 0; }
+.dl dt { opacity: .65; }
+.dl dd { margin: 0; word-break: break-word; }
+
+.stat-value { font-size: 28px; font-weight: 600; line-height: 1.1; }
+.stat-label { font-size: 13px; opacity: .7; }
+
+.q-table th { font-weight: 600; }
+
+.nav-active { color: var(--q-primary); background: rgba(14, 90, 110, .10); font-weight: 500; }
+.body--dark .nav-active { color: #7cc4d6; background: rgba(124, 196, 214, .12); }

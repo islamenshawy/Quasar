@@ -23,7 +23,7 @@ jobs:
         run: java hsm-sim/HsmSimulator.java selftest
 
       - name: Build and unit tests (L1)
-        run: mvn -B clean verify
+        run: mvn -B clean verify "-Dnpm.install=ci --no-audit --no-fund"
 
       - name: Smoke test script syntax
         run: bash -n scripts/smoke-test.sh
