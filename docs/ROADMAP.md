@@ -46,6 +46,18 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-036 | Run smoke test on DEV and TEST; record in TESTING.md | Next |
 | CMS-037 | GitHub repository, CI pipeline, PR template, branch protection | In progress |
 
+## Admin console (next minor release)
+
+| ID | Item | Status |
+|---|---|---|
+| CMS-070 | CMS Console (Vue 3 + Quasar) built into the jar; replaces `/issuance.html` | Done (branch `feature/CMS-070-admin-console`) |
+| CMS-071 | Reference data screens: currencies, segments, account types, card products, eligibility matrix | Done |
+| CMS-072 | CIF / account numbering: sequences, CIF source setting, per-type number source, allowed currencies, max per customer | Done |
+| CMS-073 | Customer and account maintenance: search, edit, status changes with reason | Done |
+| CMS-074 | Card maintenance: search, PAN lookup, history, block / unblock / lost / stolen / cancel | Done |
+| CMS-075 | Audit log viewer and dashboard | Done |
+| CMS-076 | Smoke test cases for the console API (numbering, status rules) | Next |
+
 ## 0.5.0 — Authorization engine and ledger
 
 | ID | Item | Status |

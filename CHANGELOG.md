@@ -10,6 +10,25 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 - GitHub Actions CI: hsm-sim self-test, `mvn verify`, smoke-script syntax check, jar artifact per build. (CMS-037)
 - Pull request template enforcing item ID, migrations, tests, security and docs checks. (CMS-037)
 - `docs/GITHUB.md`: repository setup, authentication, push, branch protection, issue tracking, releases. (CMS-037)
+- **CMS Console** (`ui/`, Vue 3 + Quasar), served at `/` from the same jar: dashboard, issue-card wizard, customers, accounts, cards, setup screens and audit log. Built by Maven through frontend-maven-plugin; `-DskipUi` builds the backend only. (CMS-070)
+- Reference data maintained from screens, no SQL: currencies, customer segments, account types, card products (BIN range, keys, limits) and the product eligibility matrix. Rows are deactivated, never deleted. API under `/api/admin/setup/*`. (CMS-071)
+- CIF and account numbering: `number_sequence` (prefix, length, next value, optional Luhn digit) and setting `cif.source` (CMS_GENERATED / CORE_BANKING / EITHER). Each account type is either CMS_GENERATED from a chosen sequence or CORE_BANKING (number typed by the operator). (CMS-072)
+- Account type rules: allowed currencies (`account_type_currency`) and max open accounts per customer. (CMS-072)
+- Customer maintenance: paged search with status/segment filters, edit, suspend / reactivate / close with reason; audit records field-level changes. (CMS-073)
+- Account maintenance: paged search, balances, debit-block / block / reactivate / close (close needs zero balance, no holds, no live cards). (CMS-073)
+- Card maintenance: paged search, find by full PAN (POST body, not logged), detail with status history, block / unblock / lost / stolen / cancel with reason. Pending cards can only be cancelled by an operator. (CMS-074)
+- Audit log viewer and dashboard figures: `GET /api/admin/audit`, `GET /api/admin/dashboard`. (CMS-075)
+
+### Changed
+- `/issuance.html` redirects to the console's Issue card screen (`/#/issue`). (CMS-070)
+- Account onboarding moved from `CustomerService` to the new `AccountService`. (CMS-073)
+
+### Migrations
+- `V4__configurable_reference_data.sql`: currency name/active, segment description, `number_sequence` (CIF, and ACCOUNT continuing from `account_number_seq`), `cms_setting`, account type numbering/limits, `account_type_currency` (back-filled with every existing type × currency), status reason / updated_by columns, account status `BLOCKED`, audit indexes. Existing behaviour is unchanged until setup is edited.
+
+### Breaking
+- Admin API: `GET /api/admin/customers` now returns a page `{items, total, page, size}` instead of a list (the old screen was its only caller).
+- Admin API: `GET /api/admin/reference` returns full objects for segments, account types and currencies (code and name are still present).
 
 ## [0.4.0] - 2026-09-28
 

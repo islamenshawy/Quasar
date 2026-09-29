@@ -58,19 +58,24 @@ java hsm-sim/HsmSimulator.java pinblock <PAN> 1234 0B0B0B0B0B0B0B0B1616161616161
 | T14 | Cancel a pending card | `CANCELLED` |
 | T15 | Activate the cancelled card | `INVALID_STATUS` |
 
-## 4. Manual UI cases (`/issuance.html`)
+## 4. Manual UI cases (CMS Console, `/`)
 
 | ID | Steps | Expected |
 |---|---|---|
-| UI-01 | Search by part of a name, CIF, national ID, mobile | Matching customers listed, max 50 |
-| UI-02 | New customer, leave "Name on card" untouched, type full name | Name on card fills in uppercase, max 26 |
-| UI-03 | New customer with invalid name on card (digits) | Clear error, nothing created |
-| UI-04 | Select a customer | Step 2 unlocks; summary panel updates |
-| UI-05 | Open an account type with no eligible product | Step 3 explains that no product is set up |
-| UI-06 | Change product | Card preview changes tier colour and scheme |
-| UI-07 | Issue card | Full PAN shown once with copy button; card list shows masked PAN |
-| UI-08 | Press "Hide number" | Full PAN removed from the page |
-| UI-09 | Keyboard only | All steps reachable with Tab/Enter, focus visible |
+| UI-01 | First visit | Operator id prompt; the id is shown in the header and recorded on every change |
+| UI-02 | Issue card → New customer, type the full name only | Name on card fills in uppercase, max 26, and stops following once edited |
+| UI-03 | New customer with an invalid name on card (digits) | Clear error, nothing created |
+| UI-04 | Setup → Numbering: CIF source = CMS_GENERATED, then create a customer | CIF field hidden; CIF assigned from the CIF sequence |
+| UI-05 | Setup → Account types: CURRENT = Core banking, EGP + USD, max 1. Open CURRENT in AED, then two in EGP | AED not offered; account number required; the second CURRENT is refused with the limit |
+| UI-06 | Issue a card on an account type with no eligible product | The product list says no product is set up for that combination |
+| UI-07 | Issue card | Full PAN shown once with a copy button; Hide number leaves only the masked PAN |
+| UI-08 | Card page of a pending card → Change status | Only Cancel card is offered |
+| UI-09 | Suspend a customer without a reason | Blocked with Reason is required; with a reason the badge turns Suspended |
+| UI-10 | Close an account that has a live card | Refused: cancel the live card first |
+| UI-11 | Cards → Find by full card number, unknown PAN | Card not found; the PAN never appears in the URL |
+| UI-12 | Setup → Card products → P01: change eligibility, save | The Issue card product list follows the new matrix |
+| UI-13 | Audit log, filter by action | Entries show actor, record link and details; no PAN anywhere |
+| UI-14 | Phone width (390 px) and dark mode | No horizontal scroll; the stepper is vertical; text stays readable |
 
 ## 5. Fault-injection cases (hsm-sim)
 
