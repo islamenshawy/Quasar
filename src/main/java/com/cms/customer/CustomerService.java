@@ -1,14 +1,32 @@
 package com.cms.customer;
 
 import com.cms.card.IssuanceException;
+import com.cms.common.AuditLog;
+import com.cms.common.NumberGenerator;
+import com.cms.common.Page;
+import com.cms.common.Settings;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
-/** Customer and account onboarding used by the issuance screen. */
+/**
+ * Customer (CIF) lifecycle: create, search, edit, suspend / reactivate / close.
+ *
+ * CIF numbering follows the cif.source setting:
+ *   CMS_GENERATED  CMS assigns the CIF from the CIF number sequence; a typed value is refused
+ *   CORE_BANKING   operator enters the core-banking CIF; required
+ *   EITHER         typed value is used, blank means generated
+ */
 @Service
 public class CustomerService {
 
@@ -17,130 +35,197 @@ public class CustomerService {
             String fullName, String embossingName, String nationalId,
             LocalDate dateOfBirth, String mobile, String email, String address) {}
 
+    public record UpdateCustomerRequest(
+            String customerType, String segmentCode, String fullName, String embossingName,
+            String nationalId, LocalDate dateOfBirth, String mobile, String email, String address) {}
+
     public record CustomerView(long id, String customerRef, String customerType, String segmentCode,
-                               String fullName, String embossingName, String nationalId, String status) {}
-
-    public record OpenAccountRequest(long customerId, String accountTypeCode, String currencyCode) {}
-
-    public record AccountView(long id, String accountNumber, long customerId, String accountTypeCode,
-                              String currencyCode, String status) {}
-
-    public record EligibleProduct(String code, String name, String cardType, String cardTier,
-                                  String scheme, String currencyCode) {}
+                               String segmentName, String fullName, String embossingName, String nationalId,
+                               LocalDate dateOfBirth, String mobile, String email, String address,
+                               String status, String statusReason, OffsetDateTime createdAt, String createdBy,
+                               OffsetDateTime updatedAt, String updatedBy, long accounts, long liveCards) {}
 
     public record RefItem(String code, String name) {}
 
-    private final JdbcTemplate jdbc;
+    static final List<String> CUSTOMER_TYPES = List.of("INDIVIDUAL", "CORPORATE");
 
-    public CustomerService(JdbcTemplate jdbc) {
+    private static final String SELECT = """
+            SELECT c.id, c.external_ref, c.customer_type, c.segment_code, s.name, c.full_name,
+                   c.embossing_name, c.national_id, c.date_of_birth, c.mobile, c.email, c.address,
+                   c.status, c.status_reason, c.created_at, c.created_by, c.updated_at, c.updated_by,
+                   (SELECT count(*) FROM account a WHERE a.customer_id = c.id AND a.status <> 'CLOSED'),
+                   (SELECT count(*) FROM card k WHERE k.customer_id = c.id
+                       AND k.status IN ('PENDING_PRINT','PRINTED','ACTIVE','BLOCKED','PIN_BLOCKED'))
+              FROM customer c LEFT JOIN customer_segment s ON s.code = c.segment_code
+            """;
+
+    private final JdbcTemplate jdbc;
+    private final NumberGenerator numbers;
+    private final Settings settings;
+    private final AuditLog audit;
+
+    public CustomerService(JdbcTemplate jdbc, NumberGenerator numbers, Settings settings, AuditLog audit) {
         this.jdbc = jdbc;
+        this.numbers = numbers;
+        this.settings = settings;
+        this.audit = audit;
     }
 
-    // ---------------- customer ----------------
+    // ---------------- create ----------------
 
     @Transactional
     public CustomerView createCustomer(CreateCustomerRequest r, String operator) {
-        require(r.customerRef(), "customerRef");
         require(r.fullName(), "fullName");
         require(r.embossingName(), "embossingName");
         require(r.segmentCode(), "segmentCode");
         validateEmbossing(r.embossingName());
-        String type = r.customerType() == null ? "INDIVIDUAL" : r.customerType();
+        String type = r.customerType() == null || r.customerType().isBlank() ? "INDIVIDUAL" : r.customerType();
+        validateCommon(type, r.segmentCode(), r.nationalId(), r.mobile(), r.email(), null);
 
-        Integer segOk = jdbc.queryForObject(
-                "SELECT count(*) FROM customer_segment WHERE code = ? AND active", Integer.class, r.segmentCode());
-        if (segOk == 0) throw new IssuanceException("INVALID_REQUEST", "Unknown segment " + r.segmentCode());
-
-        Integer dup = jdbc.queryForObject("SELECT count(*) FROM customer WHERE external_ref = ?",
-                Integer.class, r.customerRef());
-        if (dup > 0) throw new IssuanceException("DUPLICATE", "Customer reference already exists");
+        String cif = resolveCif(r.customerRef());
 
         long id = jdbc.queryForObject("""
                 INSERT INTO customer (external_ref, customer_type, segment_code, full_name, embossing_name,
                                       national_id, date_of_birth, mobile, email, address, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-                """, Long.class, r.customerRef(), type, r.segmentCode(), r.fullName(),
-                r.embossingName().toUpperCase(), r.nationalId(), r.dateOfBirth(), r.mobile(),
-                r.email(), r.address(), operator);
+                """, Long.class, cif, type, r.segmentCode(), r.fullName().trim(),
+                r.embossingName().trim().toUpperCase(), blankToNull(r.nationalId()), r.dateOfBirth(),
+                blankToNull(r.mobile()), blankToNull(r.email()), blankToNull(r.address()), operator);
 
-        audit(operator, "CREATE_CUSTOMER", "customer", id);
+        audit.record(operator, "CREATE_CUSTOMER", "customer", id, Map.of("cif", cif, "segment", r.segmentCode()));
         return getCustomer(id);
     }
 
+    private String resolveCif(String typed) {
+        String source = settings.get(Settings.CIF_SOURCE);
+        String cif = blankToNull(typed);
+        if (cif != null) {
+            if ("CMS_GENERATED".equals(source)) {
+                throw new IssuanceException("INVALID_REQUEST", "CIF is generated by the CMS; leave it blank");
+            }
+            if (!cif.matches("[A-Za-z0-9\\-]{1,64}")) {
+                throw new IssuanceException("INVALID_REQUEST", "CIF: letters, digits and '-' only, max 64");
+            }
+            if (cifTaken(cif)) throw new IssuanceException("DUPLICATE", "Customer reference already exists");
+            return cif;
+        }
+        if ("CORE_BANKING".equals(source)) {
+            throw new IssuanceException("INVALID_REQUEST", "customerRef (core banking CIF) is required");
+        }
+        return numbers.next("CIF", this::cifTaken);
+    }
+
+    private boolean cifTaken(String cif) {
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM customer WHERE external_ref = ?", Integer.class, cif);
+        return n != null && n > 0;
+    }
+
+    // ---------------- read ----------------
+
     public CustomerView getCustomer(long id) {
-        return jdbc.queryForObject("""
-                SELECT id, external_ref, customer_type, segment_code, full_name, embossing_name,
-                       national_id, status FROM customer WHERE id = ?
-                """, (rs, i) -> new CustomerView(rs.getLong(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7),
-                        rs.getString(8)), id);
+        List<CustomerView> c = jdbc.query(SELECT + " WHERE c.id = ?", (rs, i) -> map(rs), id);
+        if (c.isEmpty()) throw new IssuanceException("NOT_FOUND", "Customer not found");
+        return c.get(0);
     }
 
-    public List<CustomerView> searchCustomers(String q) {
-        String like = "%" + (q == null ? "" : q.trim()) + "%";
-        return jdbc.query("""
-                SELECT id, external_ref, customer_type, segment_code, full_name, embossing_name,
-                       national_id, status FROM customer
-                 WHERE external_ref ILIKE ? OR full_name ILIKE ? OR national_id ILIKE ? OR mobile ILIKE ?
-                 ORDER BY id DESC LIMIT 50
-                """, (rs, i) -> new CustomerView(rs.getLong(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6), rs.getString(7),
-                        rs.getString(8)), like, like, like, like);
+    /** Free text over CIF, name, national ID, mobile; optional status and segment filters. */
+    public Page<CustomerView> search(String q, String status, String segment, int page, int size) {
+        size = Page.size(size);
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (q != null && !q.isBlank()) {
+            String like = "%" + q.trim() + "%";
+            where.append(" AND (c.external_ref ILIKE ? OR c.full_name ILIKE ? OR c.national_id ILIKE ?"
+                    + " OR c.mobile ILIKE ? OR c.email ILIKE ?)");
+            for (int i = 0; i < 5; i++) args.add(like);
+        }
+        if (status != null && !status.isBlank()) {
+            where.append(" AND c.status = ?");
+            args.add(status);
+        }
+        if (segment != null && !segment.isBlank()) {
+            where.append(" AND c.segment_code = ?");
+            args.add(segment);
+        }
+        long total = jdbc.queryForObject("SELECT count(*) FROM customer c" + where, Long.class, args.toArray());
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(size);
+        pageArgs.add(Page.offset(page, size));
+        List<CustomerView> items = jdbc.query(SELECT + where + " ORDER BY c.id DESC LIMIT ? OFFSET ?",
+                (rs, i) -> map(rs), pageArgs.toArray());
+        return new Page<>(items, total, page, size);
     }
 
-    // ---------------- account ----------------
+    // ---------------- update ----------------
 
     @Transactional
-    public AccountView openAccount(OpenAccountRequest r, String operator) {
-        CustomerView c = getCustomer(r.customerId());
-        if (!"ACTIVE".equals(c.status())) {
-            throw new IssuanceException("INVALID_STATUS", "Customer is " + c.status());
+    public CustomerView updateCustomer(long id, UpdateCustomerRequest r, String operator) {
+        CustomerView cur = lockCustomer(id);
+        if ("CLOSED".equals(cur.status())) throw new IssuanceException("INVALID_STATUS", "Customer is CLOSED");
+        require(r.fullName(), "fullName");
+        require(r.embossingName(), "embossingName");
+        require(r.segmentCode(), "segmentCode");
+        validateEmbossing(r.embossingName());
+        String type = r.customerType() == null || r.customerType().isBlank() ? cur.customerType() : r.customerType();
+        // an inactive segment may stay on a customer that already has it
+        validateCommon(type, r.segmentCode(), r.nationalId(), r.mobile(), r.email(), cur);
+
+        jdbc.update("""
+                UPDATE customer SET customer_type = ?, segment_code = ?, full_name = ?, embossing_name = ?,
+                       national_id = ?, date_of_birth = ?, mobile = ?, email = ?, address = ?,
+                       updated_at = now(), updated_by = ?
+                 WHERE id = ?
+                """, type, r.segmentCode(), r.fullName().trim(), r.embossingName().trim().toUpperCase(),
+                blankToNull(r.nationalId()), r.dateOfBirth(), blankToNull(r.mobile()), blankToNull(r.email()),
+                blankToNull(r.address()), operator, id);
+
+        Map<String, Object> changed = new LinkedHashMap<>();
+        diff(changed, "customerType", cur.customerType(), type);
+        diff(changed, "segment", cur.segmentCode(), r.segmentCode());
+        diff(changed, "fullName", cur.fullName(), r.fullName().trim());
+        diff(changed, "embossingName", cur.embossingName(), r.embossingName().trim().toUpperCase());
+        diff(changed, "nationalId", cur.nationalId(), blankToNull(r.nationalId()));
+        diff(changed, "dateOfBirth", cur.dateOfBirth(), r.dateOfBirth());
+        diff(changed, "mobile", cur.mobile(), blankToNull(r.mobile()));
+        diff(changed, "email", cur.email(), blankToNull(r.email()));
+        diff(changed, "address", cur.address(), blankToNull(r.address()));
+        audit.record(operator, "UPDATE_CUSTOMER", "customer", id, Map.of("changed", changed));
+        return getCustomer(id);
+    }
+
+    /**
+     * ACTIVE <-> SUSPENDED, and ACTIVE/SUSPENDED -> CLOSED once every account is closed.
+     * CLOSED is final. A reason is required for anything other than reactivation.
+     */
+    @Transactional
+    public CustomerView changeStatus(long id, String status, String reason, String operator) {
+        CustomerView cur = lockCustomer(id);
+        String from = cur.status();
+        boolean allowed = switch (from) {
+            case "ACTIVE" -> status.equals("SUSPENDED") || status.equals("CLOSED");
+            case "SUSPENDED" -> status.equals("ACTIVE") || status.equals("CLOSED");
+            default -> false;
+        };
+        if (!allowed) throw new IssuanceException("INVALID_STATUS", "Cannot change customer from " + from + " to " + status);
+        if (!status.equals("ACTIVE")) require(reason, "reason");
+        if (status.equals("CLOSED") && cur.accounts() > 0) {
+            throw new IssuanceException("INVALID_STATUS", "Close the customer's " + cur.accounts() + " open account(s) first");
         }
-        Integer typeOk = jdbc.queryForObject(
-                "SELECT count(*) FROM account_type WHERE code = ? AND active", Integer.class, r.accountTypeCode());
-        if (typeOk == 0) throw new IssuanceException("INVALID_REQUEST", "Unknown account type " + r.accountTypeCode());
-
-        long id = jdbc.queryForObject("""
-                INSERT INTO account (account_number, customer_id, currency_code, account_type_code, created_by)
-                VALUES (nextval('account_number_seq')::text, ?, ?, ?, ?) RETURNING id
-                """, Long.class, r.customerId(), r.currencyCode(), r.accountTypeCode(), operator);
-
-        audit(operator, "OPEN_ACCOUNT", "account", id);
-        return getAccount(id);
+        jdbc.update("""
+                UPDATE customer SET status = ?, status_reason = ?, updated_at = now(), updated_by = ? WHERE id = ?
+                """, status, blankToNull(reason), operator, id);
+        audit.record(operator, "CUSTOMER_STATUS", "customer", id,
+                Map.of("from", from, "to", status, "reason", reason == null ? "" : reason));
+        return getCustomer(id);
     }
 
-    public AccountView getAccount(long id) {
-        return jdbc.queryForObject("""
-                SELECT id, account_number, customer_id, account_type_code, currency_code, status
-                  FROM account WHERE id = ?
-                """, (rs, i) -> new AccountView(rs.getLong(1), rs.getString(2), rs.getLong(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6)), id);
+    private CustomerView lockCustomer(long id) {
+        Integer n = jdbc.query("SELECT 1 FROM customer WHERE id = ? FOR UPDATE", rs -> rs.next() ? 1 : null, id);
+        if (n == null) throw new IssuanceException("NOT_FOUND", "Customer not found");
+        return getCustomer(id);
     }
 
-    public List<AccountView> accountsOf(long customerId) {
-        return jdbc.query("""
-                SELECT id, account_number, customer_id, account_type_code, currency_code, status
-                  FROM account WHERE customer_id = ? ORDER BY id
-                """, (rs, i) -> new AccountView(rs.getLong(1), rs.getString(2), rs.getLong(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6)), customerId);
-    }
-
-    /** Products allowed for this account's type, its customer's segment, and its currency. */
-    public List<EligibleProduct> eligibleProducts(long accountId) {
-        return jdbc.query("""
-                SELECT p.code, p.name, p.card_type, p.card_tier, p.scheme, p.currency_code
-                  FROM account a
-                  JOIN customer c            ON c.id = a.customer_id
-                  JOIN product_eligibility e ON e.account_type_code = a.account_type_code
-                                            AND e.segment_code = c.segment_code
-                  JOIN card_product p        ON p.id = e.product_id
-                 WHERE a.id = ? AND p.active AND p.currency_code = a.currency_code
-                 ORDER BY p.card_tier, p.code
-                """, (rs, i) -> new EligibleProduct(rs.getString(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getString(5), rs.getString(6)), accountId);
-    }
-
-    // ---------------- reference data for the screen ----------------
+    // ---------------- reference data for forms (active only) ----------------
 
     public List<RefItem> segments() {
         return jdbc.query("SELECT code, name FROM customer_segment WHERE active ORDER BY code",
@@ -153,15 +238,45 @@ public class CustomerService {
     }
 
     public List<RefItem> currencies() {
-        return jdbc.query("SELECT code, numeric_code FROM currency ORDER BY code",
+        return jdbc.query("SELECT code, name FROM currency WHERE active ORDER BY code",
                 (rs, i) -> new RefItem(rs.getString(1), rs.getString(2)));
     }
 
     // ---------------- helpers ----------------
 
+    private void validateCommon(String type, String segment, String nationalId, String mobile, String email,
+                                CustomerView current) {
+        if (!CUSTOMER_TYPES.contains(type)) throw new IssuanceException("INVALID_REQUEST", "Customer type must be " + CUSTOMER_TYPES);
+        boolean keepsSegment = current != null && segment.equals(current.segmentCode());
+        Integer segOk = jdbc.queryForObject("SELECT count(*) FROM customer_segment WHERE code = ?"
+                + (keepsSegment ? "" : " AND active"), Integer.class, segment);
+        if (segOk == 0) throw new IssuanceException("INVALID_REQUEST", "Unknown or inactive segment " + segment);
+        if (mobile != null && !mobile.isBlank() && !mobile.trim().matches("\\+?[0-9 ]{6,20}")) {
+            throw new IssuanceException("INVALID_REQUEST", "Mobile: digits, spaces and leading + only");
+        }
+        if (email != null && !email.isBlank() && !email.trim().matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")) {
+            throw new IssuanceException("INVALID_REQUEST", "Email is not valid");
+        }
+        if (nationalId != null && !nationalId.isBlank()) {
+            Integer dup = jdbc.queryForObject("SELECT count(*) FROM customer WHERE national_id = ? AND id <> ?",
+                    Integer.class, nationalId.trim(), current == null ? -1L : current.id());
+            if (dup > 0) throw new IssuanceException("DUPLICATE", "Another customer has national ID " + nationalId.trim());
+        }
+    }
+
     static void validateEmbossing(String name) {
-        if (name.length() > 26 || !name.matches("[A-Za-z .\\-/]+")) {
+        String n = name.trim();
+        if (n.length() > 26 || !n.matches("[A-Za-z .\\-/]+")) {
             throw new IssuanceException("INVALID_REQUEST", "Embossing name: max 26, letters/space/.-/ only");
+        }
+    }
+
+    private static void diff(Map<String, Object> out, String field, Object before, Object after) {
+        if (!Objects.equals(before, after)) {
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("from", before);
+            d.put("to", after);
+            out.put(field, d);
         }
     }
 
@@ -169,8 +284,15 @@ public class CustomerService {
         if (v == null || v.isBlank()) throw new IssuanceException("INVALID_REQUEST", field + " is required");
     }
 
-    private void audit(String actor, String action, String type, long id) {
-        jdbc.update("INSERT INTO audit_log (actor, action, entity_type, entity_id) VALUES (?, ?, ?, ?)",
-                actor, action, type, id);
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    private static CustomerView map(ResultSet rs) throws SQLException {
+        return new CustomerView(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                rs.getString(5), rs.getString(6), rs.getString(7), rs.getString(8),
+                rs.getObject(9, LocalDate.class), rs.getString(10), rs.getString(11), rs.getString(12),
+                rs.getString(13), rs.getString(14), rs.getObject(15, OffsetDateTime.class), rs.getString(16),
+                rs.getObject(17, OffsetDateTime.class), rs.getString(18), rs.getLong(19), rs.getLong(20));
     }
 }
