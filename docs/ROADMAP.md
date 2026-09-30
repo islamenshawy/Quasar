@@ -79,11 +79,11 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 
 | ID | Item | Status |
 |---|---|---|
-| CMS-051 | BASE24 packager (jPOS) from spec | Blocked (IN-01) |
-| CMS-052 | ISO server channel, header, sign-on / echo | Blocked (IN-01) |
-| CMS-053 | Message mapping to auth engine, action codes | Blocked (IN-01) |
-| CMS-054 | Dynamic ZPK exchange (FA) | Blocked (IN-01) |
-| CMS-055 | Corehost simulator + BASE24 regression suite from traces | Blocked (IN-01) |
+| CMS-051 | BASE24 packager (jPOS) | Done, provisional layout; align with spec (IN-01) |
+| CMS-052 | ISO server channel, header, sign-on / echo | Done, framing configurable; confirm with spec |
+| CMS-053 | Message mapping to auth engine, action codes | Done, provisional; confirm with spec and traces |
+| CMS-054 | Dynamic ZPK exchange (FA) | Done (field 96 layout provisional) |
+| CMS-055 | Corehost simulator + BASE24 regression suite | Done (simulator + iso-test.sh); add trace-based cases when traces arrive |
 
 ## 0.7.0 — Dexxis SOAP and EMV
 

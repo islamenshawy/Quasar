@@ -83,6 +83,23 @@ SELECT count(*) FROM account a WHERE ledger_balance <> COALESCE((SELECT sum(amou
 SELECT count(*) FROM account a WHERE held_amount <> COALESCE((SELECT sum(amount) FROM hold h WHERE h.account_id = a.id AND status = 'OPEN'), 0);
 ```
 
+## 3b. BASE24 ISO catalogue (`scripts/iso-test.sh`)
+
+Dev profile only. Every case goes through the real TCP interface via the corehost simulator.
+
+| ID | Case | Expected |
+|---|---|---|
+| I01-I03 | ISO status, 1804 sign-on, echo | listening; 1814 with 800 |
+| I04 | 1200 balance inquiry with PIN | 1210 / 000, field 54 with ledger and available |
+| I05-I06 | 1200 cash, then its 1201 repeat | 000 with approval code; repeat gets the stored answer, one debit only |
+| I07 | Wrong PIN | 117 |
+| I08-I09 | 1420 partial reversal (40.00 of 100.00 dispensed) | 1430 / 400; balance reflects 40.00 |
+| I10-I11 | 1100 pre-auth, 1220 completion | 1110 / 000, 1230 / 000 |
+| I12 | e-commerce (field 22 card not present) on P01 | 119 |
+| I13-I14 | PIN change with field 125, then new PIN | 000, 000 |
+| I15-I16 | 1804/811 key change, then a PIN under the new ZPK | 800, 000 |
+| I17-I18 | Messages recorded; seeded ZPK restored | pass |
+
 ## 4. Manual UI cases (CMS Console, `/`)
 
 | ID | Steps | Expected |

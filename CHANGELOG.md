@@ -7,6 +7,15 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 ## [Unreleased]
 
 ### Added
+- **BASE24 ISO 8583:1993 interface** (`com.cms.iso`): TCP server for the ATM/POS switch (port 7000), 2-byte or 4-ASCII length prefix, optional static header, jPOS packager from `iso/base24-1993.xml`. Each message is processed on its own virtual thread. **Layout and mapping are provisional until the BASE24 spec arrives (IN-01).** (CMS-051, CMS-052)
+- Message mapping: 1100/1120 pre-auth, 1200/1220 financial and advices, 1220 completion of a 1100, 1420/1421 reversal with partial amount (fields 30 + 4), repeat MTIs answered from the stored response, field 54 balances in responses, field 125 new PIN block. (CMS-053)
+- Network management 1804/1814: sign-on 801, sign-off 802, echo 831, dynamic acquirer ZPK exchange 811 (ZPK under ZMK in field 96, HSM FA, KCV check, new key version, old version retired). (CMS-054)
+- Corehost simulator (dev profile): `/api/dev/iso/send` and `/api/dev/iso/network` build real messages with ISO-0 PIN blocks and send them over TCP; console page **Dev tools → Switch simulator** with repeat, reverse and complete. `scripts/iso-test.sh`: 18 cases over the real TCP path. (CMS-055)
+- `GET /api/admin/iso/status` and a Switch chip in the console header.
+
+### Changed
+- Reversals and completions match the original on either field 7 (transmission date-time) or field 12 (local date-time), since BASE24 1993 field 56 carries the local date-time.
+
 - **Authorization engine** (`com.cms.auth`): balance inquiry, ATM withdrawal, POS/e-commerce purchase, pre-authorisation with hold, completion, refund, PIN change, full and partial reversal, stand-in advices. ISO 8583:1993 action codes. One database transaction per request with card and account rows locked; retransmissions get the stored response. (CMS-040, CMS-041, CMS-042, CMS-046, CMS-047, CMS-048)
 - Checks in order: card found, status, expiry, customer and account status, channel, track 2 / CVV (optional per product, HSM CY), PIN via HSM EC with try counter and automatic PIN_BLOCKED, transaction/channel fit, currency, limits (per transaction, daily amount, daily count; ATM and POS separately), funds. (CMS-041)
 - **Ledger** (`com.cms.ledger`): journals over double-entry postings, per-currency GLs created on first use (ATM cash, POS settlement, fee income, funding suspense, adjustments), holds with expiry, statements with running balance. (CMS-046, CMS-049)
