@@ -7,6 +7,17 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 ## [Unreleased]
 
 ### Added
+- **Authorization engine** (`com.cms.auth`): balance inquiry, ATM withdrawal, POS/e-commerce purchase, pre-authorisation with hold, completion, refund, PIN change, full and partial reversal, stand-in advices. ISO 8583:1993 action codes. One database transaction per request with card and account rows locked; retransmissions get the stored response. (CMS-040, CMS-041, CMS-042, CMS-046, CMS-047, CMS-048)
+- Checks in order: card found, status, expiry, customer and account status, channel, track 2 / CVV (optional per product, HSM CY), PIN via HSM EC with try counter and automatic PIN_BLOCKED, transaction/channel fit, currency, limits (per transaction, daily amount, daily count; ATM and POS separately), funds. (CMS-041)
+- **Ledger** (`com.cms.ledger`): journals over double-entry postings, per-currency GLs created on first use (ATM cash, POS settlement, fee income, funding suspense, adjustments), holds with expiry, statements with running balance. (CMS-046, CMS-049)
+- Product usage settings: ATM / POS / e-commerce switches, purchase limits, ATM withdrawal and balance-inquiry fees, CVV check flag, pre-auth hold days. Card-level channel switches and limit overrides. (CMS-050)
+- Console: Transactions page with detail, account Ledger tab (statement, holds with release, transactions), Post entry (funding, credit/debit adjustment), card Controls & limits with today's usage, Reset PIN tries, GL accounts page, today's approvals/declines/volume on the dashboard. (CMS-050)
+- `POST /api/dev/authorize` (dev profile only) and `scripts/auth-test.sh`: 32 authorization scenarios end to end. (CMS-040)
+- HSM client: `CY` CVV verification.
+
+### Migrations
+- `V5__authorization_and_ledger.sql`: product channels/fees/purchase limits/CVV flag/hold days, card controls and limit overrides, POS usage counters, transaction types, advice/fee/balance-after/merchant/original columns, `journal`, hold capture fields and `EXPIRED`, GL types and standard GLs per currency, `auth_id_seq`. Existing products keep their behaviour: purchase amount limits fall back to the ATM limits while empty, fees are zero, e-commerce is off.
+
 - GitHub Actions CI: hsm-sim self-test, `mvn verify`, smoke-script syntax check, jar artifact per build. (CMS-037)
 - Pull request template enforcing item ID, migrations, tests, security and docs checks. (CMS-037)
 - `docs/GITHUB.md`: repository setup, authentication, push, branch protection, issue tracking, releases. (CMS-037)

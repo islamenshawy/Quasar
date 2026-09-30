@@ -58,6 +58,31 @@ java hsm-sim/HsmSimulator.java pinblock <PAN> 1234 0B0B0B0B0B0B0B0B1616161616161
 | T14 | Cancel a pending card | `CANCELLED` |
 | T15 | Activate the cancelled card | `INVALID_STATUS` |
 
+## 3a. Authorization catalogue (`scripts/auth-test.sh`)
+
+Needs the **dev** profile (it calls `POST /api/dev/authorize`), hsm-sim and the seed. It creates its own customer, prepaid account and card (PIN 1234), funds 1000.00 and runs:
+
+| ID | Case | Expected |
+|---|---|---|
+| A02-A04 | Balance inquiry: correct PIN / no PIN / wrong PIN | 000 with balances / 112 / 117 |
+| A05-A06 | Withdraw 200.00, then resend the identical message | 000; the resend returns the same transaction id |
+| A07-A09 | Over per-withdrawal limit / over available / USD on an EGP account | 121 / 116 / 119 |
+| A10-A13 | Full reversal, repeated reversal, partial reversal (100.00 dispensed), unmatched reversal | 400 each; balance restored only where due |
+| A14-A16 | PIN change; old PIN rejected; new PIN accepted | 000 / 117 / 000 |
+| A17-A22 | POS purchase, cash at POS, pre-auth + completion, refund, e-commerce on a product without e-commerce | 000 / 902 / hold then capture / credit / 119 |
+| A23-A24 | Card-level per-withdrawal override; card e-commerce on while product is off | 121 / 119 |
+| A25-A26b | Blocked card; stand-in advice on it; advice in another currency | 104 / 000 posted / 000 not posted |
+| A27-A28 | Third wrong PIN | 106 and card PIN_BLOCKED |
+| A29-A30 | Statement closes at the ledger balance; transactions recorded | pass |
+
+Ledger integrity after any run (all must return 0):
+
+```sql
+SELECT count(*) FROM (SELECT journal_id FROM posting GROUP BY journal_id HAVING sum(amount) <> 0) x;       -- unbalanced journals
+SELECT count(*) FROM account a WHERE ledger_balance <> COALESCE((SELECT sum(amount) FROM posting p WHERE p.account_id = a.id), 0);
+SELECT count(*) FROM account a WHERE held_amount <> COALESCE((SELECT sum(amount) FROM hold h WHERE h.account_id = a.id AND status = 'OPEN'), 0);
+```
+
 ## 4. Manual UI cases (CMS Console, `/`)
 
 | ID | Steps | Expected |

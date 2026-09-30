@@ -196,7 +196,7 @@ java -jar target/cms-core-0.4.0.jar
 # or during development: mvn spring-boot:run  (add -DskipUi for faster restarts)
 ```
 
-On first start, Flyway creates the schema (migrations V1 to V4). The log shows `Successfully applied 4 migrations`, then `Started CmsApplication`. An existing 0.4.0 database gets only V4 (`Migrating schema "public" to version "4 - configurable reference data"`); see §9.7 before upgrading a shared database.
+On first start, Flyway creates the schema (migrations V1 to V5). The log shows `Successfully applied 5 migrations`, then `Started CmsApplication`. An existing database gets only the migrations it is missing, e.g. a 0.4.0 database gets V4 and V5 (`Migrating schema "public" to version "4 - configurable reference data"`); see §9.7 before upgrading a shared database.
 
 The CMS starts even if the HSM is down, because HSM connections are opened on first use. Check the HSM state with the health endpoint (§8).
 
@@ -258,9 +258,10 @@ Run these checks in order. Each must pass before moving to the next.
 | 2 | HSM | `curl localhost:8080/api/admin/hsm/health` | `"status":"UP"`, `lmkCheckValue` = `EB7A8DF91182DBE2` (sim default) |
 | 3 | Console | Open `http://localhost:8080/` | Dashboard loads and the header shows **HSM UP**; Setup → Account types lists the seeded types |
 | 4 | Smoke test | `./scripts/smoke-test.sh` | `15 passed, 0 failed` |
-| 5 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
+| 5 | Authorization (DEV only) | `./scripts/auth-test.sh` | `32 passed, 0 failed` |
+| 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
-If all five pass, the deployment is good. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
+If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
 
 ---
 
@@ -392,6 +393,7 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 - Back up first (step 2). V4 cannot be undone except by restoring that backup.
 - Never start a feature-branch build against a shared database. Once a migration has run, its file can no longer change (Flyway checksum), so a branch build can block the next release.
 - After the restart, check Setup → Numbering & settings (the `ACCOUNT` next number is above the highest existing account number) and Setup → Account types before operators start working.
+- **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
 - Admin API changes for any script that calls it: `GET /api/admin/customers` returns a page `{items, total, page, size}`, and `/api/admin/reference` returns full objects (see CHANGELOG, **Breaking**).
 
 ### 9.8 Rollback
