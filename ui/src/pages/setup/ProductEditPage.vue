@@ -115,7 +115,8 @@ const form = reactive({
   pinTryLimit: 3, dailyWdCount: 10, dailyWdAmount: null, perTxnWdMax: null, maxCardsPerAccount: 1, active: true,
   // usage settings (flattened here, nested as "usage" in the API)
   atmEnabled: true, posEnabled: true, ecomEnabled: false, dailyPosCount: 20, dailyPosAmount: null, perTxnPosMax: null,
-  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7
+  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7,
+  autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30
 })
 const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee']
 
@@ -206,6 +207,16 @@ const sections = computed(() => [
       { name: 'preauthHoldDays', label: 'Pre-auth hold', type: 'number', required: true, suffix: 'days', rules: [v => (v >= 1 && v <= 45) || '1 to 45'] },
       { name: 'verifyCvv', label: 'Verify CVV / iCVV from track 2 (needs the final track layout, IN-04)', type: 'toggle', col: 'col-12' }
     ]
+  },
+  {
+    title: 'Renewal and printing',
+    note: 'Used by the CARD_RENEWAL and STALE_PENDING_PRINT batch jobs.',
+    fields: [
+      { name: 'autoRenew', label: 'Renew cards automatically before they expire', type: 'toggle', col: 'col-12' },
+      { name: 'leadDays', label: 'Renew this many days before expiry', type: 'number', required: true, suffix: 'days', rules: [v => (v >= 1 && v <= 180) || '1 to 180'] },
+      { name: 'samePan', label: 'Renewal keeps the card number', type: 'toggle' },
+      { name: 'pendingPrintMaxDays', label: 'Cancel cards not printed within', type: 'number', required: true, suffix: 'days', rules: [v => (v >= 1 && v <= 365) || '1 to 365'] }
+    ]
   }
 ])
 
@@ -229,7 +240,7 @@ function setProduct (p) {
   product.value = p
   const exp = currencies.value.find(c => c.code === p.currencyCode)?.exponent ?? 2
   const u = p.usage || {}
-  Object.assign(form, p, u, {
+  Object.assign(form, p, u, p.renewal || {}, {
     description: p.description || '', chipProfile: p.chipProfile || '',
     dailyWdAmount: toMajor(p.dailyWdAmount, exp), perTxnWdMax: toMajor(p.perTxnWdMax, exp)
   })
@@ -246,6 +257,7 @@ async function save () {
     ...form,
     dailyWdAmount: toMinor(form.dailyWdAmount, exponent.value),
     perTxnWdMax: toMinor(form.perTxnWdMax, exponent.value),
+    renewal: { autoRenew: form.autoRenew, leadDays: form.leadDays, samePan: form.samePan, pendingPrintMaxDays: form.pendingPrintMaxDays },
     usage: {
       atmEnabled: form.atmEnabled, posEnabled: form.posEnabled, ecomEnabled: form.ecomEnabled,
       dailyPosCount: form.dailyPosCount, verifyCvv: form.verifyCvv, preauthHoldDays: form.preauthHoldDays,

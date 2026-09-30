@@ -23,6 +23,7 @@ const routes = [
       { path: 'approvals', name: 'approvals', component: () => import('./pages/ApprovalsPage.vue'), meta: { title: 'Approvals' } },
       { path: 'switch-simulator', name: 'switch-sim', component: () => import('./pages/SwitchSimulatorPage.vue'), meta: { title: 'Switch simulator', role: 'write' } },
       { path: 'gl', name: 'gl', component: () => import('./pages/GlPage.vue'), meta: { title: 'GL accounts' } },
+      { path: 'batch', name: 'batch', component: () => import('./pages/BatchJobsPage.vue'), meta: { title: 'Batch jobs' } },
       { path: 'audit', name: 'audit', component: () => import('./pages/AuditPage.vue'), meta: { title: 'Audit log' } },
       { path: 'admin/users', name: 'users', component: () => import('./pages/UsersPage.vue'), meta: { title: 'Users', role: 'admin' } },
       { path: 'admin/approval-policy', name: 'approval-policy', component: () => import('./pages/ApprovalPolicyPage.vue'), meta: { title: 'Approval policy' } },

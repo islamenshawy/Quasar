@@ -117,6 +117,7 @@ const nav = computed(() => [
     title: 'Control',
     items: [
       { to: '/gl', label: 'GL accounts', icon: 'account_tree' },
+      { to: '/batch', label: 'Batch jobs', icon: 'schedule' },
       { to: '/audit', label: 'Audit log', icon: 'history' },
       { to: '/admin/approval-policy', label: 'Approval policy', icon: 'rule' },
       ...(can.admin ? [{ to: '/admin/users', label: 'Users', icon: 'manage_accounts' }] : [])
