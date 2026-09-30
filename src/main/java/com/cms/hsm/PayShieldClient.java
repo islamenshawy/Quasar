@@ -126,6 +126,18 @@ public final class PayShieldClient implements AutoCloseable {
     }
 
     // ------------------------------------------------------------------
+    // CY - verify a card verification value.
+    // Request : CY + CVK pair + CVV(3) + PAN + ';' + expiry(YYMM) + service code(3)
+    // Response: CZ + err   (00 = verified, 01 = verification failure)
+    // ------------------------------------------------------------------
+    public boolean verifyCvv(String cvk, String cvv, String pan, String expiryYYMM, String serviceCode) {
+        Response r = raw("CY", cvk + cvv + pan + ";" + expiryYYMM + serviceCode);
+        if ("00".equals(r.errorCode)) return true;
+        if ("01".equals(r.errorCode)) return false;
+        throw new HsmException("CY", r.errorCode, "CVV verification error");
+    }
+
+    // ------------------------------------------------------------------
     // KQ - ARQC verification / ARPC generation. NOT IMPLEMENTED YET.
     // Needs: mode flag, scheme ID (Visa/MC CVN), MK-AC, PAN+PSN, ATC,
     // unpredictable number, transaction data (from BASE24 EMV token / field 55),
