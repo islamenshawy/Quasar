@@ -111,8 +111,12 @@ const form = reactive({
   code: '', name: '', description: '', cardType: 'DEBIT', cardTier: 'CLASSIC', scheme: 'MEEZA',
   currencyCode: 'EGP', bin: '', panLength: 16, rangeStart: 1, rangeEnd: null, serviceCode: '221',
   validityMonths: 36, chipProfile: '', pvki: '1', pvkKeyName: null, cvkKeyName: null, imkAcKeyName: null,
-  pinTryLimit: 3, dailyWdCount: 10, dailyWdAmount: null, perTxnWdMax: null, maxCardsPerAccount: 1, active: true
+  pinTryLimit: 3, dailyWdCount: 10, dailyWdAmount: null, perTxnWdMax: null, maxCardsPerAccount: 1, active: true,
+  // usage settings (flattened here, nested as "usage" in the API)
+  atmEnabled: true, posEnabled: true, ecomEnabled: false, dailyPosCount: 20, dailyPosAmount: null, perTxnPosMax: null,
+  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7
 })
+const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee']
 
 const exponent = computed(() => currencies.value.find(c => c.code === form.currencyCode)?.exponent ?? 2)
 const keyOptions = type => keys.value.filter(k => k.keyType === type).map(k => ({ label: `${k.keyName} · KCV ${k.kcv}`, value: k.keyName }))
@@ -184,6 +188,23 @@ const sections = computed(() => [
       { name: 'perTxnWdMax', label: 'Per withdrawal max', type: 'number', required: true, prefix: form.currencyCode, step: 'any',
         rules: [v => v >= 0 || '≥ 0', v => v <= form.dailyWdAmount || 'Cannot exceed the daily amount'] }
     ]
+  },
+  {
+    title: 'Channels, purchases and fees',
+    note: `A channel switched off here is off for every card of the product. Amounts in ${form.currencyCode}.`,
+    fields: [
+      { name: 'atmEnabled', label: 'ATM', type: 'toggle', col: 'col-4' },
+      { name: 'posEnabled', label: 'POS', type: 'toggle', col: 'col-4' },
+      { name: 'ecomEnabled', label: 'E-commerce', type: 'toggle', col: 'col-4' },
+      { name: 'dailyPosCount', label: 'Purchases per day', type: 'number', required: true, col: 'col-12 col-sm-4', rules: [v => v >= 0 || '≥ 0'] },
+      { name: 'dailyPosAmount', label: 'Daily purchase amount', type: 'number', required: true, step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4', rules: [v => v >= 0 || '≥ 0'] },
+      { name: 'perTxnPosMax', label: 'Per purchase max', type: 'number', required: true, step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4',
+        rules: [v => v >= 0 || '≥ 0', v => v <= form.dailyPosAmount || 'Cannot exceed the daily purchase amount'] },
+      { name: 'wdFee', label: 'ATM withdrawal fee', type: 'number', required: true, step: 'any', prefix: form.currencyCode, rules: [v => v >= 0 || '≥ 0'] },
+      { name: 'biFee', label: 'Balance inquiry fee', type: 'number', required: true, step: 'any', prefix: form.currencyCode, rules: [v => v >= 0 || '≥ 0'] },
+      { name: 'preauthHoldDays', label: 'Pre-auth hold', type: 'number', required: true, suffix: 'days', rules: [v => (v >= 1 && v <= 45) || '1 to 45'] },
+      { name: 'verifyCvv', label: 'Verify CVV / iCVV from track 2 (needs the final track layout, IN-04)', type: 'toggle', col: 'col-12' }
+    ]
   }
 ])
 
@@ -206,10 +227,12 @@ async function load () {
 function setProduct (p) {
   product.value = p
   const exp = currencies.value.find(c => c.code === p.currencyCode)?.exponent ?? 2
-  Object.assign(form, p, {
+  const u = p.usage || {}
+  Object.assign(form, p, u, {
     description: p.description || '', chipProfile: p.chipProfile || '',
     dailyWdAmount: toMajor(p.dailyWdAmount, exp), perTxnWdMax: toMajor(p.perTxnWdMax, exp)
   })
+  for (const k of USAGE_MONEY) form[k] = toMajor(u[k], exp)
 }
 
 async function submit () {
@@ -221,7 +244,12 @@ async function save () {
   const body = {
     ...form,
     dailyWdAmount: toMinor(form.dailyWdAmount, exponent.value),
-    perTxnWdMax: toMinor(form.perTxnWdMax, exponent.value)
+    perTxnWdMax: toMinor(form.perTxnWdMax, exponent.value),
+    usage: {
+      atmEnabled: form.atmEnabled, posEnabled: form.posEnabled, ecomEnabled: form.ecomEnabled,
+      dailyPosCount: form.dailyPosCount, verifyCvv: form.verifyCvv, preauthHoldDays: form.preauthHoldDays,
+      ...Object.fromEntries(USAGE_MONEY.map(k => [k, toMinor(form[k], exponent.value)]))
+    }
   }
   try {
     const p = isNew.value

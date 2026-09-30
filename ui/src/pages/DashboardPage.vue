@@ -24,6 +24,43 @@
       </div>
     </div>
 
+    <div class="row q-col-gutter-md q-mt-none">
+      <div class="col-12 col-md-4">
+        <q-card flat bordered class="full-height cursor-pointer" @click="$router.push('/transactions')">
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-medium">Transactions today</div>
+            <div class="row q-mt-sm">
+              <div class="col"><div class="stat-value text-positive">{{ t.approved ?? 0 }}</div><div class="stat-label">approved</div></div>
+              <div class="col"><div class="stat-value text-negative">{{ t.declined ?? 0 }}</div><div class="stat-label">declined</div></div>
+              <div class="col"><div class="stat-value">{{ approvalRate }}</div><div class="stat-label">approval rate</div></div>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+      <div class="col-12 col-md-4">
+        <q-card flat bordered class="full-height">
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-medium q-mb-sm">Approved volume today</div>
+            <div v-if="!t.volume?.length" class="muted text-body2">No approved spend yet</div>
+            <div v-for="v in t.volume" :key="v.currency + v.type" class="row justify-between text-body2">
+              <span>{{ label(v.type) }} · {{ v.count }}</span><span class="mono">{{ money(v.amount, 2, v.currency) }}</span>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+      <div class="col-12 col-md-4">
+        <q-card flat bordered class="full-height">
+          <q-card-section>
+            <div class="text-subtitle1 text-weight-medium q-mb-sm">Top decline reasons today</div>
+            <div v-if="!t.topDeclines?.length" class="muted text-body2">No declines</div>
+            <div v-for="x in t.topDeclines" :key="x.code" class="row justify-between text-body2">
+              <span><q-badge color="negative" :label="x.code" class="q-mr-xs" />{{ codes[x.code] || 'Declined' }}</span><span>{{ x.count }}</span>
+            </div>
+          </q-card-section>
+        </q-card>
+      </div>
+    </div>
+
     <q-banner v-if="d.lowRangeProducts?.length" rounded class="bg-orange-1 text-dark q-mt-md">
       <template #avatar><q-icon name="warning" color="warning" /></template>
       PAN range running low:
@@ -68,9 +105,15 @@ import { computed, onMounted, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import { api } from '../lib/api.js'
-import { dateTime, label, statusColor } from '../lib/format.js'
+import { dateTime, label, money, statusColor } from '../lib/format.js'
 
 const d = ref({})
+const t = ref({})
+const codes = ref({})
+const approvalRate = computed(() => {
+  const n = (t.value.approved ?? 0) + (t.value.declined ?? 0)
+  return n ? Math.round(100 * t.value.approved / n) + '%' : '—'
+})
 const recent = ref([])
 const newCustomer = ref(false)
 
@@ -105,7 +148,10 @@ const auditColumns = [
 ]
 
 onMounted(async () => {
-  const [dash, audit] = await Promise.all([api.get('/admin/dashboard'), api.get('/admin/audit?size=10')])
+  const [dash, audit, today, ac] = await Promise.all([api.get('/admin/dashboard'), api.get('/admin/audit?size=10'),
+    api.get('/admin/transactions/today'), api.get('/admin/action-codes')])
+  t.value = today
+  codes.value = ac
   d.value = dash
   recent.value = audit.items
 })

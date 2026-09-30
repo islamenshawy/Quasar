@@ -162,6 +162,110 @@ public class CardAdminService {
         return get(id);
     }
 
+    // ---------------- controls and limits ----------------
+
+    /** Channel switches and limit overrides (null = product value), with the product values and today's usage. */
+    public record CardLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled,
+                             Integer dailyWdCountLimit, Long dailyWdAmountLimit, Long perTxnWdLimit,
+                             Integer dailyPosCountLimit, Long dailyPosAmountLimit, Long perTxnPosLimit,
+                             ProductLimits product, Usage today, String currencyCode, int exponent) {}
+
+    public record ProductLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled, int dailyWdCount,
+                                long dailyWdAmount, long perTxnWdMax, int dailyPosCount, long dailyPosAmount,
+                                long perTxnPosMax) {}
+
+    public record Usage(int wdCount, long wdAmount, int posCount, long posAmount) {}
+
+    public record ControlsRequest(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled,
+                                  Integer dailyWdCountLimit, Long dailyWdAmountLimit, Long perTxnWdLimit,
+                                  Integer dailyPosCountLimit, Long dailyPosAmountLimit, Long perTxnPosLimit,
+                                  String reason) {}
+
+    public CardLimits limits(long cardId) {
+        get(cardId);
+        Usage u = jdbc.query("""
+                SELECT wd_count, wd_amount, pos_count, pos_amount FROM card_daily_usage
+                 WHERE card_id = ? AND usage_date = CURRENT_DATE
+                """, rs -> rs.next() ? new Usage(rs.getInt(1), rs.getLong(2), rs.getInt(3), rs.getLong(4)) : new Usage(0, 0, 0, 0),
+                cardId);
+        return jdbc.queryForObject("""
+                SELECT k.atm_enabled, k.pos_enabled, k.ecom_enabled, k.daily_wd_count_limit, k.daily_wd_amount_limit,
+                       k.per_txn_wd_limit, k.daily_pos_count_limit, k.daily_pos_amount_limit, k.per_txn_pos_limit,
+                       p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_wd_count, p.daily_wd_amount,
+                       p.per_txn_wd_max, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount), COALESCE(p.per_txn_pos_max, p.per_txn_wd_max),
+                       a.currency_code, cur.exponent
+                  FROM card k JOIN card_product p ON p.id = k.product_id
+                  JOIN account a ON a.id = k.account_id JOIN currency cur ON cur.code = a.currency_code
+                 WHERE k.id = ?
+                """, (rs, i) -> new CardLimits(rs.getBoolean(1), rs.getBoolean(2), rs.getBoolean(3),
+                        (Integer) rs.getObject(4), (Long) rs.getObject(5), (Long) rs.getObject(6),
+                        (Integer) rs.getObject(7), (Long) rs.getObject(8), (Long) rs.getObject(9),
+                        new ProductLimits(rs.getBoolean(10), rs.getBoolean(11), rs.getBoolean(12), rs.getInt(13),
+                                rs.getLong(14), rs.getLong(15), rs.getInt(16), rs.getLong(17), rs.getLong(18)),
+                        u, rs.getString(19), rs.getInt(20)), cardId);
+    }
+
+    /**
+     * Card-level channel switches and limit overrides. A channel switched off at product level
+     * stays off whatever the card says; overrides replace the product value for this card only.
+     */
+    @Transactional
+    public CardLimits updateControls(long cardId, ControlsRequest r, String operator) {
+        CardView c = get(cardId);
+        if (Set.of("LOST", "STOLEN", "EXPIRED", "CANCELLED").contains(c.status())) {
+            throw new IssuanceException("INVALID_STATUS", "Card is " + c.status());
+        }
+        if (r.reason() == null || r.reason().isBlank()) throw new IssuanceException("INVALID_REQUEST", "reason is required");
+        for (Number n : new Number[]{r.dailyWdCountLimit(), r.dailyWdAmountLimit(), r.perTxnWdLimit(),
+                r.dailyPosCountLimit(), r.dailyPosAmountLimit(), r.perTxnPosLimit()}) {
+            if (n != null && n.longValue() < 0) throw new IssuanceException("INVALID_REQUEST", "Limits cannot be negative");
+        }
+        CardLimits before = limits(cardId);
+        jdbc.update("""
+                UPDATE card SET atm_enabled = ?, pos_enabled = ?, ecom_enabled = ?, daily_wd_count_limit = ?,
+                       daily_wd_amount_limit = ?, per_txn_wd_limit = ?, daily_pos_count_limit = ?,
+                       daily_pos_amount_limit = ?, per_txn_pos_limit = ?, version = version + 1
+                 WHERE id = ?
+                """, r.atmEnabled(), r.posEnabled(), r.ecomEnabled(), r.dailyWdCountLimit(), r.dailyWdAmountLimit(),
+                r.perTxnWdLimit(), r.dailyPosCountLimit(), r.dailyPosAmountLimit(), r.perTxnPosLimit(), cardId);
+        Map<String, Object> d = new java.util.LinkedHashMap<>();
+        d.put("reason", r.reason().trim());
+        d.put("before", controlsOf(before));
+        d.put("after", controlsOf(limits(cardId)));
+        audit.record(operator, "CARD_CONTROLS", "card", cardId, d);
+        return limits(cardId);
+    }
+
+    private static Map<String, Object> controlsOf(CardLimits l) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("atm", l.atmEnabled());
+        m.put("pos", l.posEnabled());
+        m.put("ecom", l.ecomEnabled());
+        m.put("dailyWdCount", l.dailyWdCountLimit());
+        m.put("dailyWdAmount", l.dailyWdAmountLimit());
+        m.put("perTxnWd", l.perTxnWdLimit());
+        m.put("dailyPosCount", l.dailyPosCountLimit());
+        m.put("dailyPosAmount", l.dailyPosAmountLimit());
+        m.put("perTxnPos", l.perTxnPosLimit());
+        return m;
+    }
+
+    /** Clears wrong-PIN attempts on an active card (a PIN_BLOCKED card is reactivated with a status change). */
+    @Transactional
+    public CardView resetPinTries(long cardId, String reason, String operator) {
+        record Row(String status, int tries) {}
+        Row r = jdbc.query("SELECT status, pin_tries FROM card WHERE id = ? FOR UPDATE",
+                rs -> rs.next() ? new Row(rs.getString(1), rs.getInt(2)) : null, cardId);
+        if (r == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
+        if (!"ACTIVE".equals(r.status())) {
+            throw new IssuanceException("INVALID_STATUS", "Card is " + r.status() + "; reactivate a PIN-blocked card instead");
+        }
+        if (reason == null || reason.isBlank()) throw new IssuanceException("INVALID_REQUEST", "reason is required");
+        jdbc.update("UPDATE card SET pin_tries = 0, version = version + 1 WHERE id = ?", cardId);
+        audit.record(operator, "RESET_PIN_TRIES", "card", cardId, Map.of("from", r.tries(), "reason", reason.trim()));
+        return get(cardId);
+    }
+
     private static CardView map(ResultSet rs) throws SQLException {
         String masked = rs.getString(2) + "*".repeat(rs.getInt(4) - 10) + rs.getString(3);
         String status = rs.getString(11);

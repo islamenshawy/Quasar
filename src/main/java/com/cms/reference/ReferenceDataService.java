@@ -46,7 +46,12 @@ public class ReferenceDataService {
                           int validityMonths, String chipProfile, String pvki, String pvkKeyName,
                           String cvkKeyName, String imkAcKeyName, int pinTryLimit, int dailyWdCount,
                           long dailyWdAmount, long perTxnWdMax, int maxCardsPerAccount, boolean active,
-                          long cardsIssued, long rangeRemaining) {}
+                          long cardsIssued, long rangeRemaining, UsageSettings usage) {}
+
+    /** Channel switches, POS limits, fees and authorization options of a product. Amounts in minor units. */
+    public record UsageSettings(Boolean atmEnabled, Boolean posEnabled, Boolean ecomEnabled, Integer dailyPosCount,
+                                Long dailyPosAmount, Long perTxnPosMax, Long wdFee, Long biFee, Boolean verifyCvv,
+                                Integer preauthHoldDays) {}
 
     /** Create and update. On update code, bin, panLength, rangeStart and currencyCode are ignored. */
     public record ProductRequest(String code, String name, String description, String cardType,
@@ -55,7 +60,7 @@ public class ReferenceDataService {
                                  Integer validityMonths, String chipProfile, String pvki, String pvkKeyName,
                                  String cvkKeyName, String imkAcKeyName, Integer pinTryLimit,
                                  Integer dailyWdCount, Long dailyWdAmount, Long perTxnWdMax,
-                                 Integer maxCardsPerAccount, Boolean active) {}
+                                 Integer maxCardsPerAccount, Boolean active, UsageSettings usage) {}
 
     public record Eligibility(String accountTypeCode, String segmentCode) {}
 
@@ -281,7 +286,9 @@ public class ReferenceDataService {
                    p.validity_months, p.chip_profile, p.pvki, p.pvk_key_name, p.cvk_key_name,
                    p.imk_ac_key_name, p.pin_try_limit, p.daily_wd_count, p.daily_wd_amount, p.per_txn_wd_max,
                    p.max_cards_per_account, p.active,
-                   (SELECT count(*) FROM card c WHERE c.product_id = p.id)
+                   (SELECT count(*) FROM card c WHERE c.product_id = p.id),
+                   p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount),
+                   COALESCE(p.per_txn_pos_max, p.per_txn_wd_max), p.wd_fee, p.bi_fee, p.verify_cvv, p.preauth_hold_days
               FROM card_product p
             """;
 
@@ -320,6 +327,7 @@ public class ReferenceDataService {
                 r.pvki(), r.pvkKeyName(), r.cvkKeyName(), blankToNull(r.imkAcKeyName()), r.pinTryLimit(),
                 r.dailyWdCount(), r.dailyWdAmount(), r.perTxnWdMax(), r.maxCardsPerAccount(),
                 r.active() == null || r.active(), op);
+        saveUsage(id, usageOrDefault(r), op);
         audit.record(op, "CREATE_PRODUCT", "card_product", id, Map.of("code", code, "bin", r.bin()));
         return product(code);
     }
@@ -344,6 +352,7 @@ public class ReferenceDataService {
                 r.pvkKeyName(), r.cvkKeyName(), blankToNull(r.imkAcKeyName()), r.pinTryLimit(),
                 r.dailyWdCount(), r.dailyWdAmount(), r.perTxnWdMax(), r.maxCardsPerAccount(),
                 r.active() == null || r.active(), op, cur.id());
+        saveUsage(cur.id(), r.usage() == null ? cur.usage() : r.usage(), op);
         audit.record(op, "UPDATE_PRODUCT", "card_product", cur.id(), Map.of("code", code));
         return product(code);
     }
@@ -390,6 +399,39 @@ public class ReferenceDataService {
         }
     }
 
+    /** New products: POS limits default to the ATM limits, e-commerce off, no fees. */
+    private static UsageSettings usageOrDefault(ProductRequest r) {
+        UsageSettings u = r.usage();
+        return new UsageSettings(
+                u == null || u.atmEnabled() == null || u.atmEnabled(),
+                u == null || u.posEnabled() == null || u.posEnabled(),
+                u != null && Boolean.TRUE.equals(u.ecomEnabled()),
+                u == null || u.dailyPosCount() == null ? 20 : u.dailyPosCount(),
+                u == null || u.dailyPosAmount() == null ? r.dailyWdAmount() : u.dailyPosAmount(),
+                u == null || u.perTxnPosMax() == null ? r.perTxnWdMax() : u.perTxnPosMax(),
+                u == null || u.wdFee() == null ? 0L : u.wdFee(),
+                u == null || u.biFee() == null ? 0L : u.biFee(),
+                u != null && Boolean.TRUE.equals(u.verifyCvv()),
+                u == null || u.preauthHoldDays() == null ? 7 : u.preauthHoldDays());
+    }
+
+    private void saveUsage(long productId, UsageSettings u, String op) {
+        if (u.dailyPosCount() == null || u.dailyPosCount() < 0) bad("Purchases per day is required");
+        if (u.dailyPosAmount() == null || u.dailyPosAmount() < 0) bad("Daily purchase amount is required");
+        if (u.perTxnPosMax() == null || u.perTxnPosMax() < 0) bad("Per-purchase maximum is required");
+        if (u.perTxnPosMax() > u.dailyPosAmount()) bad("Per-purchase maximum cannot exceed the daily purchase amount");
+        if (u.wdFee() == null || u.wdFee() < 0 || u.biFee() == null || u.biFee() < 0) bad("Fees cannot be negative");
+        if (u.preauthHoldDays() == null || u.preauthHoldDays() < 1 || u.preauthHoldDays() > 45) bad("Pre-auth hold must be 1 to 45 days");
+        jdbc.update("""
+                UPDATE card_product SET atm_enabled = ?, pos_enabled = ?, ecom_enabled = ?, daily_pos_count = ?,
+                       daily_pos_amount = ?, per_txn_pos_max = ?, wd_fee = ?, bi_fee = ?, verify_cvv = ?,
+                       preauth_hold_days = ?, updated_at = now(), updated_by = ?
+                 WHERE id = ?
+                """, !Boolean.FALSE.equals(u.atmEnabled()), !Boolean.FALSE.equals(u.posEnabled()),
+                Boolean.TRUE.equals(u.ecomEnabled()), u.dailyPosCount(), u.dailyPosAmount(), u.perTxnPosMax(),
+                u.wdFee(), u.biFee(), Boolean.TRUE.equals(u.verifyCvv()), u.preauthHoldDays(), op, productId);
+    }
+
     private void requireKey(String name, String type) {
         if (name == null || name.isBlank()) bad(type + " key is required");
         if (!exists("SELECT count(*) FROM hsm_key WHERE key_name = ? AND key_type = ? AND active", name, type)) {
@@ -404,7 +446,10 @@ public class ReferenceDataService {
                 rs.getLong(11), end, next, rs.getString(14), rs.getInt(15), rs.getString(16),
                 rs.getString(17), rs.getString(18), rs.getString(19), rs.getString(20), rs.getInt(21),
                 rs.getInt(22), rs.getLong(23), rs.getLong(24), rs.getInt(25), rs.getBoolean(26),
-                rs.getLong(27), Math.max(0, end - next + 1));
+                rs.getLong(27), Math.max(0, end - next + 1),
+                new UsageSettings(rs.getBoolean(28), rs.getBoolean(29), rs.getBoolean(30), rs.getInt(31),
+                        rs.getLong(32), rs.getLong(33), rs.getLong(34), rs.getLong(35), rs.getBoolean(36),
+                        rs.getInt(37)));
     }
 
     // =========================================================================

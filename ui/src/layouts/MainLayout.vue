@@ -67,7 +67,8 @@ const nav = [
       { to: '/issue', label: 'Issue card', icon: 'add_card' },
       { to: '/customers', label: 'Customers', icon: 'people' },
       { to: '/accounts', label: 'Accounts', icon: 'account_balance' },
-      { to: '/cards', label: 'Cards', icon: 'credit_card' }
+      { to: '/cards', label: 'Cards', icon: 'credit_card' },
+      { to: '/transactions', label: 'Transactions', icon: 'receipt_long' }
     ]
   },
   {
@@ -82,7 +83,10 @@ const nav = [
   },
   {
     title: 'Control',
-    items: [{ to: '/audit', label: 'Audit log', icon: 'history' }]
+    items: [
+      { to: '/gl', label: 'GL accounts', icon: 'account_tree' },
+      { to: '/audit', label: 'Audit log', icon: 'history' }
+    ]
   }
 ]
 

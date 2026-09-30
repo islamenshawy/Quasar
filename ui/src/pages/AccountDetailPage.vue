@@ -11,6 +11,8 @@
         </template>
         <template #actions>
           <StatusAction :current="a.status" :targets="targets" entity="account" :reason-optional="['ACTIVE']" :on-change="changeStatus" />
+          <q-btn outline no-caps color="primary" icon="post_add" label="Post entry" :disable="a.status === 'CLOSED'"
+                 @click="entryDialog = true" />
           <q-btn unelevated no-caps color="primary" icon="add_card" label="Issue card" :disable="a.status !== 'ACTIVE'"
                  :to="{ path: '/issue', query: { customerId: a.customerId, accountId: a.id } }" />
         </template>
@@ -30,6 +32,7 @@
       <q-card flat bordered>
         <q-tabs v-model="tab" align="left" no-caps active-color="primary" indicator-color="primary" dense class="q-px-sm">
           <q-tab name="cards" :label="`Cards (${cards.length})`" />
+          <q-tab name="ledger" label="Ledger" />
           <q-tab name="details" label="Details" />
           <q-tab name="activity" label="Activity" />
         </q-tabs>
@@ -41,6 +44,9 @@
                      @row-click="(e, r) => $router.push(`/cards/${r.id}`)">
               <template #body-cell-status="p"><q-td :props="p"><StatusBadge :status="p.value" /></q-td></template>
             </q-table>
+          </q-tab-panel>
+          <q-tab-panel name="ledger" class="q-pa-none">
+            <AccountLedger ref="ledgerRef" :account="a" @changed="load" />
           </q-tab-panel>
           <q-tab-panel name="details">
             <dl class="dl" style="max-width: 640px">
@@ -57,6 +63,7 @@
           </q-tab-panel>
         </q-tab-panels>
       </q-card>
+      <LedgerEntryDialog v-model="entryDialog" :account="a" @saved="() => { load(); ledgerRef?.reload() }" />
     </template>
     <div v-else class="flex flex-center q-pa-xl"><q-spinner size="40px" color="primary" /></div>
   </q-page>
@@ -69,6 +76,8 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import StatusAction from '../components/StatusAction.vue'
 import AuditTrail from '../components/AuditTrail.vue'
+import AccountLedger from '../components/AccountLedger.vue'
+import LedgerEntryDialog from '../components/LedgerEntryDialog.vue'
 import { api, qs } from '../lib/api.js'
 import { date, dateTime, expiry, label, money } from '../lib/format.js'
 
@@ -78,6 +87,8 @@ const a = ref(null)
 const cards = ref([])
 const tab = ref('cards')
 const trail = ref(null)
+const ledgerRef = ref(null)
+const entryDialog = ref(false)
 
 const OPEN = ['ACTIVE', 'DEBIT_BLOCKED', 'BLOCKED']
 const targets = computed(() => OPEN.includes(a.value?.status)
