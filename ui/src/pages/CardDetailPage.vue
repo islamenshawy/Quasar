@@ -9,9 +9,9 @@
           account <router-link :to="`/accounts/${k.accountId}`" class="mono">{{ k.accountNumber }}</router-link>
         </template>
         <template #actions>
-          <q-btn v-if="k.status === 'ACTIVE' && k.pinTries > 0" outline no-caps color="primary" icon="password"
+          <q-btn v-if="can.write && k.status === 'ACTIVE' && k.pinTries > 0" outline no-caps color="primary" icon="password"
                  :label="`Reset PIN tries (${k.pinTries})`" @click="resetTries" />
-          <StatusAction :current="k.status" :targets="k.allowedTransitions" entity="card" :on-change="changeStatus" />
+          <StatusAction v-if="can.write" :current="k.status" :targets="k.allowedTransitions" entity="card" :on-change="changeStatus" />
         </template>
       </PageHeader>
 
@@ -28,7 +28,7 @@
             <template #avatar><q-icon name="password" color="warning" /></template>
             PIN tries exhausted ({{ k.pinTries }}/{{ k.pinTryLimit }}). Reactivating resets the counter.
           </q-banner>
-          <CardLimitsCard class="q-mt-md" :card-id="k.id" :editable="!['LOST','STOLEN','EXPIRED','CANCELLED'].includes(k.status)" />
+          <CardLimitsCard class="q-mt-md" :card-id="k.id" :editable="can.write && !['LOST','STOLEN','EXPIRED','CANCELLED'].includes(k.status)" />
         </div>
         <div class="col-12 col-md-7">
           <q-card flat bordered>
@@ -91,7 +91,8 @@ import CardPreview from '../components/CardPreview.vue'
 import AuditTrail from '../components/AuditTrail.vue'
 import CardLimitsCard from '../components/CardLimitsCard.vue'
 import TxnTable from '../components/TxnTable.vue'
-import { api } from '../lib/api.js'
+import { api, pending } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { dateTime, expiry, label, statusColor } from '../lib/format.js'
 
 const $q = useQuasar()
@@ -111,8 +112,8 @@ async function load () {
 }
 
 async function changeStatus (status, reason) {
-  k.value = await api.post(`/admin/cards/${props.id}/status`, { status, reason })
-  Notify.create({ type: 'positive', message: `Card is now ${label(status).toLowerCase()}` })
+  const res = await api.post(`/admin/cards/${props.id}/status`, { status, reason })
+  if (!pending(res)) Notify.create({ type: 'positive', message: `Card is now ${label(status).toLowerCase()}` })
   load()
 }
 
@@ -123,8 +124,8 @@ function resetTries () {
     prompt: { model: '', type: 'text', label: 'Reason', isValid: v => !!(v && v.trim()), outlined: true },
     cancel: true
   }).onOk(async reason => {
-    k.value = await api.post(`/admin/cards/${props.id}/reset-pin-tries`, { reason })
-    Notify.create({ type: 'positive', message: 'PIN tries reset' })
+    const res = await api.post(`/admin/cards/${props.id}/reset-pin-tries`, { reason })
+    if (!pending(res)) Notify.create({ type: 'positive', message: 'PIN tries reset' })
     load()
   })
 }

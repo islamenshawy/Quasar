@@ -2,8 +2,8 @@
   <q-page padding class="page">
     <PageHeader title="Dashboard" subtitle="Issuance activity and portfolio status">
       <template #actions>
-        <q-btn outline no-caps color="primary" icon="person_add" label="New customer" @click="newCustomer = true" />
-        <q-btn unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
+        <q-btn v-if="can.write" outline no-caps color="primary" icon="person_add" label="New customer" @click="newCustomer = true" />
+        <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
       </template>
     </PageHeader>
 
@@ -105,6 +105,7 @@ import { computed, onMounted, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import { api } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { dateTime, label, money, statusColor } from '../lib/format.js'
 
 const d = ref({})

@@ -5,7 +5,7 @@
         <q-input v-model="filter" dense outlined debounce="200" placeholder="Filter" clearable style="min-width: 200px">
           <template #prepend><q-icon name="search" /></template>
         </q-input>
-        <q-btn unelevated no-caps color="primary" icon="add" label="New product" to="/setup/products/new" />
+        <q-btn v-if="can.supervise" unelevated no-caps color="primary" icon="add" label="New product" to="/setup/products/new" />
       </template>
     </PageHeader>
 
@@ -34,6 +34,7 @@
 import { onMounted, ref } from 'vue'
 import PageHeader from '../../components/PageHeader.vue'
 import { api } from '../../lib/api.js'
+import { can } from '../../lib/session.js'
 import { label } from '../../lib/format.js'
 
 const rows = ref([])

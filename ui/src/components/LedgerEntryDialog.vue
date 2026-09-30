@@ -26,7 +26,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { Notify } from 'quasar'
-import { api } from '../lib/api.js'
+import { api, pending } from '../lib/api.js'
 import { money, toMinor } from '../lib/format.js'
 
 const props = defineProps({ modelValue: Boolean, account: { type: Object, required: true } })
@@ -48,10 +48,10 @@ watch(() => props.modelValue, v => { if (v) { type.value = 'FUNDING'; amount.val
 async function save () {
   busy.value = true
   try {
-    await api.post(`/admin/accounts/${props.account.id}/entries`, {
+    const res = await api.post(`/admin/accounts/${props.account.id}/entries`, {
       type: type.value, amount: toMinor(amount.value, props.account.exponent), narrative: narrative.value
     })
-    Notify.create({ type: 'positive', message: 'Entry posted' })
+    if (!pending(res)) Notify.create({ type: 'positive', message: 'Entry posted' })
     emit('saved')
     show.value = false
   } catch { /* shown */ } finally {

@@ -20,10 +20,29 @@
         </q-chip>
         <q-btn flat round dense :icon="$q.dark.isActive ? 'light_mode' : 'dark_mode'" aria-label="Toggle dark mode"
                @click="toggleDark" />
-        <q-btn flat no-caps dense icon="person" :label="session.operator || 'Set operator'" class="q-ml-sm"
-               @click="askOperator(false)">
-          <q-tooltip>Operator id sent with every change (test mode)</q-tooltip>
+        <q-btn flat round dense icon="how_to_reg" aria-label="Approvals" to="/approvals" class="q-ml-xs">
+          <q-badge v-if="pendingApprovals" color="warning" text-color="dark" floating :label="pendingApprovals" />
+          <q-tooltip>{{ pendingApprovals }} change(s) waiting for approval</q-tooltip>
         </q-btn>
+        <q-btn-dropdown flat no-caps dense icon="person" :label="session.user?.username" class="q-ml-sm">
+          <q-list style="min-width: 220px">
+            <q-item>
+              <q-item-section>
+                <q-item-label>{{ session.user?.fullName }}</q-item-label>
+                <q-item-label caption>{{ session.user?.roles?.join(', ') }}</q-item-label>
+              </q-item-section>
+            </q-item>
+            <q-separator />
+            <q-item clickable v-close-popup :to="{ name: 'login', query: { mode: 'password', next: $route.fullPath } }">
+              <q-item-section avatar><q-icon name="password" /></q-item-section>
+              <q-item-section>Change password</q-item-section>
+            </q-item>
+            <q-item clickable v-close-popup @click="signOut">
+              <q-item-section avatar><q-icon name="logout" /></q-item-section>
+              <q-item-section>Sign out</q-item-section>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
       </q-toolbar>
     </q-header>
 
@@ -35,10 +54,13 @@
                   clickable v-ripple active-class="nav-active">
             <q-item-section avatar><q-icon :name="item.icon" /></q-item-section>
             <q-item-section>{{ item.label }}</q-item-section>
+            <q-item-section v-if="item.badge" side>
+              <q-badge color="warning" text-color="dark" :label="item.badge" />
+            </q-item-section>
           </q-item>
         </template>
       </q-list>
-      <div class="q-pa-md text-caption muted absolute-bottom">
+      <div class="q-px-md q-pb-md text-caption muted">
         cms-core {{ version.version || '…' }}
       </div>
     </q-drawer>
@@ -54,8 +76,9 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
+import { useRouter } from 'vue-router'
 import { api } from '../lib/api.js'
-import { session, setOperator } from '../lib/session.js'
+import { can, clearUser, session } from '../lib/session.js'
 import { loadReference } from '../lib/reference.js'
 
 const $q = useQuasar()
@@ -64,17 +87,20 @@ const version = reactive({})
 const hsm = reactive({ status: '…', color: 'grey-7', icon: 'memory', detail: 'Checking' })
 const iso = reactive({ label: '…', color: 'grey-7', detail: 'Checking' })
 const devTools = ref(false)
+const pendingApprovals = ref(0)
+const router = useRouter()
 
-const nav = [
+const nav = computed(() => [
   {
     title: 'Operations',
     items: [
       { to: '/', label: 'Dashboard', icon: 'dashboard', exact: true },
-      { to: '/issue', label: 'Issue card', icon: 'add_card' },
+      ...(can.write ? [{ to: '/issue', label: 'Issue card', icon: 'add_card' }] : []),
       { to: '/customers', label: 'Customers', icon: 'people' },
       { to: '/accounts', label: 'Accounts', icon: 'account_balance' },
       { to: '/cards', label: 'Cards', icon: 'credit_card' },
-      { to: '/transactions', label: 'Transactions', icon: 'receipt_long' }
+      { to: '/transactions', label: 'Transactions', icon: 'receipt_long' },
+      { to: '/approvals', label: 'Approvals', icon: 'how_to_reg', badge: pendingApprovals.value || null }
     ]
   },
   {
@@ -91,14 +117,28 @@ const nav = [
     title: 'Control',
     items: [
       { to: '/gl', label: 'GL accounts', icon: 'account_tree' },
-      { to: '/audit', label: 'Audit log', icon: 'history' }
+      { to: '/audit', label: 'Audit log', icon: 'history' },
+      { to: '/admin/approval-policy', label: 'Approval policy', icon: 'rule' },
+      ...(can.admin ? [{ to: '/admin/users', label: 'Users', icon: 'manage_accounts' }] : [])
     ]
   }
-]
+])
 
-const navGroups = computed(() => devTools.value
-  ? [...nav.slice(0, 2), { title: 'Dev tools', items: [{ to: '/switch-simulator', label: 'Switch simulator', icon: 'lan' }] }, ...nav.slice(2)]
-  : nav)
+const navGroups = computed(() => devTools.value && can.write
+  ? [...nav.value.slice(0, 2), { title: 'Dev tools', items: [{ to: '/switch-simulator', label: 'Switch simulator', icon: 'lan' }] }, ...nav.value.slice(2)]
+  : nav.value)
+
+async function checkApprovals () {
+  try {
+    pendingApprovals.value = (await api.get('/admin/approvals/pending-count', { quiet: true })).pending
+  } catch { /* signed out */ }
+}
+
+async function signOut () {
+  await api.post('/auth/logout', {}, { quiet: true }).catch(() => {})
+  clearUser()
+  router.replace({ name: 'login' })
+}
 
 async function checkIso () {
   try {
@@ -119,16 +159,6 @@ function toggleDark () {
   try { localStorage.setItem('cms.dark', String($q.dark.isActive)) } catch { /* ignore */ }
 }
 
-function askOperator (required) {
-  $q.dialog({
-    title: 'Operator',
-    message: 'Your operator id is recorded on every change. Test mode only: real sign-in replaces this (CMS-060).',
-    prompt: { model: session.operator, type: 'text', isValid: v => /^[A-Za-z0-9._-]{2,64}$/.test(v || ''), outlined: true },
-    persistent: required,
-    cancel: !required
-  }).onOk(v => setOperator(v))
-}
-
 async function checkHsm () {
   try {
     const r = await fetch('/api/admin/hsm/health')
@@ -147,13 +177,13 @@ onMounted(async () => {
     const d = localStorage.getItem('cms.dark')
     if (d !== null) $q.dark.set(d === 'true')
   } catch { /* ignore */ }
-  if (!session.operator) askOperator(true)
   loadReference().catch(() => {})
   api.get('/version', { quiet: true }).then(v => Object.assign(version, v)).catch(() => {})
   checkHsm()
   checkIso()
+  checkApprovals()
   api.get('/dev/iso/status', { quiet: true }).then(() => { devTools.value = true }).catch(() => {})
-  timer = setInterval(() => { checkHsm(); checkIso() }, 30000)
+  timer = setInterval(() => { checkHsm(); checkIso(); checkApprovals() }, 30000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 </script>

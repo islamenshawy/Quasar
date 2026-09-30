@@ -7,7 +7,7 @@
       </template>
       <template #actions>
         <q-btn flat no-caps label="Cancel" to="/setup/products" />
-        <q-btn unelevated no-caps color="primary" icon="save" label="Save product" :loading="busy" @click="submit" />
+        <q-btn v-if="can.supervise" unelevated no-caps color="primary" icon="save" label="Save product" :loading="busy" @click="submit" />
       </template>
     </PageHeader>
 
@@ -50,7 +50,7 @@
           </div>
         </div>
         <q-space />
-        <q-btn outline no-caps color="primary" icon="save" label="Save eligibility" :loading="eligBusy" @click="saveEligibility" />
+        <q-btn v-if="can.supervise" outline no-caps color="primary" icon="save" label="Save eligibility" :loading="eligBusy" @click="saveEligibility" />
       </q-card-section>
       <q-card-section class="q-pt-none" style="overflow-x: auto">
         <q-markup-table flat dense separator="cell" style="min-width: 520px">
@@ -90,7 +90,8 @@ import { Notify } from 'quasar'
 import PageHeader from '../../components/PageHeader.vue'
 import DynamicForm from '../../components/DynamicForm.vue'
 import CardPreview from '../../components/CardPreview.vue'
-import { api } from '../../lib/api.js'
+import { api, pending } from '../../lib/api.js'
+import { can } from '../../lib/session.js'
 import { reloadReference } from '../../lib/reference.js'
 import { toMajor, toMinor } from '../../lib/format.js'
 
@@ -255,6 +256,7 @@ async function save () {
     const p = isNew.value
       ? await api.post('/admin/setup/products', body)
       : await api.put(`/admin/setup/products/${props.code}`, body)
+    if (pending(p)) return
     Notify.create({ type: 'positive', message: `Product ${p.code} saved` })
     reloadReference().catch(() => {})
     if (isNew.value) router.replace(`/setup/products/${p.code}`)
@@ -276,8 +278,8 @@ async function saveEligibility () {
     return { accountTypeCode, segmentCode }
   })
   try {
-    await api.put(`/admin/setup/products/${props.code}/eligibility`, rows)
-    Notify.create({ type: 'positive', message: `Eligibility saved: ${rows.length} combination(s)` })
+    const res = await api.put(`/admin/setup/products/${props.code}/eligibility`, rows)
+    if (!pending(res)) Notify.create({ type: 'positive', message: `Eligibility saved: ${rows.length} combination(s)` })
   } catch { /* shown */ } finally {
     eligBusy.value = false
   }

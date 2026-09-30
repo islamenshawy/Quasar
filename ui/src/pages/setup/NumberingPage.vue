@@ -7,7 +7,7 @@
         <q-card-section>
           <div class="text-subtitle1 text-weight-medium">Customer CIF source</div>
           <div class="text-body2 muted q-mb-sm">How the CIF is set when a customer is created.</div>
-          <q-option-group v-model="cifSource" :options="cifOptions" color="primary" @update:model-value="saveCif" />
+          <q-option-group v-model="cifSource" :options="cifOptions" color="primary" :disable="!can.supervise" @update:model-value="saveCif" />
         </q-card-section>
       </q-card>
     </template>
@@ -21,7 +21,8 @@
 import { onMounted, ref } from 'vue'
 import { Notify } from 'quasar'
 import RefCrudPage from '../../components/RefCrudPage.vue'
-import { api } from '../../lib/api.js'
+import { api, pending } from '../../lib/api.js'
+import { can } from '../../lib/session.js'
 import { reloadReference } from '../../lib/reference.js'
 
 const crud = ref(null)
@@ -39,7 +40,12 @@ onMounted(async () => {
 
 async function saveCif (v) {
   try {
-    await api.put('/admin/setup/settings/cif.source', { value: v })
+    const res = await api.put('/admin/setup/settings/cif.source', { value: v })
+    if (pending(res)) {
+      const s = await api.get('/admin/setup/settings')
+      cifSource.value = s.find(x => x.key === 'cif.source')?.value
+      return
+    }
     Notify.create({ type: 'positive', message: 'CIF source updated' })
     reloadReference().catch(() => {})
   } catch {

@@ -8,9 +8,9 @@
           <span v-if="c.statusReason"> · {{ label(c.status) }}: {{ c.statusReason }}</span>
         </template>
         <template #actions>
-          <q-btn outline no-caps color="primary" icon="edit" label="Edit" :disable="c.status === 'CLOSED'" @click="editDialog = true" />
-          <StatusAction :current="c.status" :targets="targets" entity="customer" :reason-optional="['ACTIVE']" :on-change="changeStatus" />
-          <q-btn unelevated no-caps color="primary" icon="add" label="Open account" :disable="c.status !== 'ACTIVE'"
+          <q-btn v-if="can.write" outline no-caps color="primary" icon="edit" label="Edit" :disable="c.status === 'CLOSED'" @click="editDialog = true" />
+          <StatusAction v-if="can.write" :current="c.status" :targets="targets" entity="customer" :reason-optional="['ACTIVE']" :on-change="changeStatus" />
+          <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add" label="Open account" :disable="c.status !== 'ACTIVE'"
                  @click="accountDialog = true" />
         </template>
       </PageHeader>
@@ -94,7 +94,8 @@ import StatusAction from '../components/StatusAction.vue'
 import AuditTrail from '../components/AuditTrail.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import OpenAccountDialog from '../components/OpenAccountDialog.vue'
-import { api } from '../lib/api.js'
+import { api, pending } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { date, dateTime, expiry, label, money } from '../lib/format.js'
 
 const props = defineProps({ id: { type: String, required: true } })
@@ -143,8 +144,8 @@ async function load () {
 }
 
 async function changeStatus (status, reason) {
-  c.value = await api.post(`/admin/customers/${props.id}/status`, { status, reason })
-  Notify.create({ type: 'positive', message: `Customer is now ${label(status).toLowerCase()}` })
+  const res = await api.post(`/admin/customers/${props.id}/status`, { status, reason })
+  if (!pending(res)) Notify.create({ type: 'positive', message: `Customer is now ${label(status).toLowerCase()}` })
   load()
 }
 

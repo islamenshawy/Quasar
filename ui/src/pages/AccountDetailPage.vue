@@ -10,10 +10,10 @@
           <span v-if="a.statusReason"> · {{ label(a.status) }}: {{ a.statusReason }}</span>
         </template>
         <template #actions>
-          <StatusAction :current="a.status" :targets="targets" entity="account" :reason-optional="['ACTIVE']" :on-change="changeStatus" />
-          <q-btn outline no-caps color="primary" icon="post_add" label="Post entry" :disable="a.status === 'CLOSED'"
+          <StatusAction v-if="can.write" :current="a.status" :targets="targets" entity="account" :reason-optional="['ACTIVE']" :on-change="changeStatus" />
+          <q-btn v-if="can.write" outline no-caps color="primary" icon="post_add" label="Post entry" :disable="a.status === 'CLOSED'"
                  @click="entryDialog = true" />
-          <q-btn unelevated no-caps color="primary" icon="add_card" label="Issue card" :disable="a.status !== 'ACTIVE'"
+          <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add_card" label="Issue card" :disable="a.status !== 'ACTIVE'"
                  :to="{ path: '/issue', query: { customerId: a.customerId, accountId: a.id } }" />
         </template>
       </PageHeader>
@@ -78,7 +78,8 @@ import StatusAction from '../components/StatusAction.vue'
 import AuditTrail from '../components/AuditTrail.vue'
 import AccountLedger from '../components/AccountLedger.vue'
 import LedgerEntryDialog from '../components/LedgerEntryDialog.vue'
-import { api, qs } from '../lib/api.js'
+import { api, pending, qs } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { date, dateTime, expiry, label, money } from '../lib/format.js'
 
 const props = defineProps({ id: { type: String, required: true } })
@@ -119,8 +120,8 @@ async function load () {
 }
 
 async function changeStatus (status, reason) {
-  a.value = await api.post(`/admin/accounts/${props.id}/status`, { status, reason })
-  Notify.create({ type: 'positive', message: `Account is now ${label(status).toLowerCase()}` })
+  const res = await api.post(`/admin/accounts/${props.id}/status`, { status, reason })
+  if (!pending(res)) Notify.create({ type: 'positive', message: `Account is now ${label(status).toLowerCase()}` })
   load()
 }
 
