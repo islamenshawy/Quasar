@@ -26,7 +26,7 @@ jobs:
         run: mvn -B clean verify "-Dnpm.install=ci --no-audit --no-fund"
 
       - name: Smoke test script syntax
-        run: bash -n scripts/smoke-test.sh && bash -n scripts/auth-test.sh
+        run: bash -n scripts/smoke-test.sh && bash -n scripts/auth-test.sh && bash -n scripts/iso-test.sh
 
       - name: Keep the jar
         uses: actions/upload-artifact@v4

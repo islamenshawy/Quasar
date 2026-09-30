@@ -30,7 +30,11 @@ public record AuthRequest(
         OriginalRef original,       // reversal / completion: the original message
         Long amountCompleted) {     // reversal: amount actually completed (dispensed); 0 or null = full
 
-    /** Original data elements (field 56): identify the transaction a reversal or completion refers to. */
+    /**
+     * Original data elements (field 56): identify the transaction a reversal or completion refers to.
+     * transmissionDt matches either the original's transmission date-time (field 7, MMDDhhmmss)
+     * or its local date-time (field 12, YYMMDDhhmmss), whichever the switch sends.
+     */
     public record OriginalRef(String mti, String stan, String transmissionDt, String acquirerId) {
         public String key() {
             return mti + "|" + stan + "|" + transmissionDt + "|" + acquirerId;
