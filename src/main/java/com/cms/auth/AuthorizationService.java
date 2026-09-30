@@ -1,6 +1,7 @@
 package com.cms.auth;
 
 import com.cms.card.KeyRepository;
+import com.cms.emv.EmvService;
 import com.cms.card.Luhn;
 import com.cms.hsm.HsmException;
 import com.cms.hsm.PayShieldClient;
@@ -54,11 +55,13 @@ public class AuthorizationService {
     private final PayShieldClient hsm;
     private final KeyRepository keys;
     private final LedgerService ledger;
+    private final EmvService emvService;
     private final String acquirerZpkName;
     private final PinBlockFormat pinBlockFormat;
 
     public AuthorizationService(JdbcTemplate jdbc, PlatformTransactionManager txm, PanCrypto panCrypto,
                                 PinService pins, PayShieldClient hsm, KeyRepository keys, LedgerService ledger,
+                                EmvService emvService,
                                 @Value("${cms.keys.corehost-zpk-name}") String acquirerZpkName,
                                 @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -68,6 +71,7 @@ public class AuthorizationService {
         this.hsm = hsm;
         this.keys = keys;
         this.ledger = ledger;
+        this.emvService = emvService;
         this.acquirerZpkName = acquirerZpkName;
         this.pinBlockFormat = pinBlockFormat;
     }
@@ -119,6 +123,24 @@ public class AuthorizationService {
         d = checkTrackData(r, c);
         if (d != null) return finish(txnId, d, "track data / CVV mismatch", c);
 
+        EmvService.Check emv = null;
+        if (r.iccData() != null && !r.iccData().isBlank() && c.imkName != null) {
+            emv = emvService.verify(r.iccData(), r.pan(), c.psn, c.imkName, c.emvScheme, c.emvDataList);
+            jdbc.update("UPDATE iso_transaction SET emv_arqc_ok = ? WHERE id = ?", emv.ok(), txnId);
+            if (!emv.ok()) return finish(txnId, SUSPECTED_COUNTERFEIT, emv.reason(), c);
+            if (c.lastAtc != null && emv.atc() <= c.lastAtc) {
+                AuthResponse replay = finish(txnId, SUSPECTED_COUNTERFEIT, "ATC " + emv.atc() + " not above last " + c.lastAtc, c);
+                return replay.withIcc(emvService.responseTlv(emv, false));
+            }
+            jdbc.update("UPDATE card SET last_atc = ? WHERE id = ?", emv.atc(), c.cardId);
+        }
+        AuthResponse resp = decide(r, c, txnId);
+        return emv == null ? resp : resp.withIcc(emvService.responseTlv(emv, resp.approved()));
+    }
+
+    /** PIN, then the transaction itself. */
+    private AuthResponse decide(AuthRequest r, Ctx c, long txnId) {
+        String d;
         boolean pinRequired = r.channel() == Channel.ATM;
         if (pinRequired && !r.hasPin()) return finish(txnId, PIN_REQUIRED, "no PIN block", c);
         if (r.hasPin()) {
@@ -583,6 +605,8 @@ public class AuthorizationService {
         int pinTries, pinTryLimit, dailyWdCount, dailyPosCount, preauthDays;
         long dailyWdAmount, perTxnWd, dailyPosAmount, perTxnPos, wdFee, biFee;
         boolean productAtm, productPos, productEcom, cardAtm, cardPos, cardEcom, verifyCvv;
+        String psn, imkName, emvScheme, emvDataList;
+        Integer lastAtc;
     }
 
     private static final String CTX_SELECT = """
@@ -594,7 +618,8 @@ public class AuthorizationService {
                    COALESCE(k.daily_wd_amount_limit, p.daily_wd_amount), COALESCE(k.per_txn_wd_limit, p.per_txn_wd_max),
                    COALESCE(k.daily_pos_amount_limit, p.daily_pos_amount, p.daily_wd_amount), COALESCE(k.per_txn_pos_limit, p.per_txn_pos_max, p.per_txn_wd_max),
                    p.wd_fee, p.bi_fee, p.atm_enabled, p.pos_enabled, p.ecom_enabled,
-                   k.atm_enabled, k.pos_enabled, k.ecom_enabled, p.verify_cvv
+                   k.atm_enabled, k.pos_enabled, k.ecom_enabled, p.verify_cvv,
+                   k.psn, p.imk_ac_key_name, p.emv_scheme, p.emv_data_list, k.last_atc
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN account a      ON a.id = k.account_id
@@ -663,6 +688,11 @@ public class AuthorizationService {
         c.cardPos = rs.getBoolean(30);
         c.cardEcom = rs.getBoolean(31);
         c.verifyCvv = rs.getBoolean(32);
+        c.psn = rs.getString(33);
+        c.imkName = rs.getString(34);
+        c.emvScheme = rs.getString(35);
+        c.emvDataList = rs.getString(36);
+        c.lastAtc = (Integer) rs.getObject(37);
         return c;
     }
 

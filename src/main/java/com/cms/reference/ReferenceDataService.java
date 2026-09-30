@@ -46,10 +46,14 @@ public class ReferenceDataService {
                           int validityMonths, String chipProfile, String pvki, String pvkKeyName,
                           String cvkKeyName, String imkAcKeyName, int pinTryLimit, int dailyWdCount,
                           long dailyWdAmount, long perTxnWdMax, int maxCardsPerAccount, boolean active,
-                          long cardsIssued, long rangeRemaining, UsageSettings usage, RenewalSettings renewal) {}
+                          long cardsIssued, long rangeRemaining, UsageSettings usage, RenewalSettings renewal,
+                          EmvSettings emv) {}
 
     /** Renewal and print housekeeping (batch jobs CARD_RENEWAL, STALE_PENDING_PRINT). */
     public record RenewalSettings(Boolean autoRenew, Integer leadDays, Boolean samePan, Integer pendingPrintMaxDays) {}
+
+    /** Chip cryptogram settings; used when the product has an IMK-AC key. */
+    public record EmvSettings(String scheme, String dataList) {}
 
     /** Channel switches, POS limits, fees and authorization options of a product. Amounts in minor units. */
     public record UsageSettings(Boolean atmEnabled, Boolean posEnabled, Boolean ecomEnabled, Integer dailyPosCount,
@@ -63,7 +67,8 @@ public class ReferenceDataService {
                                  Integer validityMonths, String chipProfile, String pvki, String pvkKeyName,
                                  String cvkKeyName, String imkAcKeyName, Integer pinTryLimit,
                                  Integer dailyWdCount, Long dailyWdAmount, Long perTxnWdMax,
-                                 Integer maxCardsPerAccount, Boolean active, UsageSettings usage, RenewalSettings renewal) {}
+                                 Integer maxCardsPerAccount, Boolean active, UsageSettings usage, RenewalSettings renewal,
+                                 EmvSettings emv) {}
 
     public record Eligibility(String accountTypeCode, String segmentCode) {}
 
@@ -292,7 +297,7 @@ public class ReferenceDataService {
                    (SELECT count(*) FROM card c WHERE c.product_id = p.id),
                    p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount),
                    COALESCE(p.per_txn_pos_max, p.per_txn_wd_max), p.wd_fee, p.bi_fee, p.verify_cvv, p.preauth_hold_days,
-                   p.auto_renew, p.renewal_lead_days, p.renew_same_pan, p.pending_print_max_days
+                   p.auto_renew, p.renewal_lead_days, p.renew_same_pan, p.pending_print_max_days, p.emv_scheme, p.emv_data_list
               FROM card_product p
             """;
 
@@ -333,6 +338,7 @@ public class ReferenceDataService {
                 r.active() == null || r.active(), op);
         saveUsage(id, usageOrDefault(r), op);
         saveRenewal(id, r.renewal() == null ? new RenewalSettings(true, 30, true, 30) : r.renewal());
+        if (r.emv() != null) saveEmv(id, r.emv());
         audit.record(op, "CREATE_PRODUCT", "card_product", id, Map.of("code", code, "bin", r.bin()));
         return product(code);
     }
@@ -359,6 +365,7 @@ public class ReferenceDataService {
                 r.active() == null || r.active(), op, cur.id());
         saveUsage(cur.id(), r.usage() == null ? cur.usage() : r.usage(), op);
         saveRenewal(cur.id(), r.renewal() == null ? cur.renewal() : r.renewal());
+        saveEmv(cur.id(), r.emv() == null ? cur.emv() : r.emv());
         audit.record(op, "UPDATE_PRODUCT", "card_product", cur.id(), Map.of("code", code));
         return product(code);
     }
@@ -447,6 +454,15 @@ public class ReferenceDataService {
                 !Boolean.FALSE.equals(s.autoRenew()), lead, !Boolean.FALSE.equals(s.samePan()), stale, productId);
     }
 
+    private void saveEmv(long productId, EmvSettings e) {
+        String scheme = e.scheme() == null ? "EMV_CSK" : e.scheme();
+        if (!List.of("VISA_CVN10", "EMV_CSK").contains(scheme)) bad("Cryptogram scheme must be VISA_CVN10 or EMV_CSK");
+        String list = e.dataList() == null ? "" : e.dataList().replace(" ", "").toUpperCase();
+        if (!list.matches("([0-9A-F]{2,6}(:CVR)?)(,[0-9A-F]{2,6}(:CVR)?)*")) bad("Data list: comma-separated tags, e.g. 9F02,9F03,...,9F10:CVR");
+        if (list.length() > 256) bad("Data list too long");
+        jdbc.update("UPDATE card_product SET emv_scheme = ?, emv_data_list = ? WHERE id = ?", scheme, list, productId);
+    }
+
     private void requireKey(String name, String type) {
         if (name == null || name.isBlank()) bad(type + " key is required");
         if (!exists("SELECT count(*) FROM hsm_key WHERE key_name = ? AND key_type = ? AND active", name, type)) {
@@ -465,7 +481,8 @@ public class ReferenceDataService {
                 new UsageSettings(rs.getBoolean(28), rs.getBoolean(29), rs.getBoolean(30), rs.getInt(31),
                         rs.getLong(32), rs.getLong(33), rs.getLong(34), rs.getLong(35), rs.getBoolean(36),
                         rs.getInt(37)),
-                new RenewalSettings(rs.getBoolean(38), rs.getInt(39), rs.getBoolean(40), rs.getInt(41)));
+                new RenewalSettings(rs.getBoolean(38), rs.getInt(39), rs.getBoolean(40), rs.getInt(41)),
+                new EmvSettings(rs.getString(42), rs.getString(43)));
     }
 
     // =========================================================================

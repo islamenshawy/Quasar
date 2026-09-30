@@ -15,6 +15,7 @@ cms:
     # TEST keys from scripts/seed-dev.sql, used only by the dev corehost simulator
     acquirer-zpk-clear: 4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E
     zmk-clear: 1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A
+    imk-ac-clear: 4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D   # IMK_AC_P01, for the simulator's chip emulation
 logging:
   level:
     com.cms: DEBUG

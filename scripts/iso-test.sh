@@ -78,5 +78,16 @@ R=$(get "/api/admin/transactions?cardId=$CARD&size=100"); expect "I17 all ISO me
 R=$(post /api/dev/iso/network '{"function":"811","zpkClear":"4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E"}')
 expect "I18 seeded acquirer ZPK restored" "$R" .actionCode 800
 
+# chip (EMV): field 55 with an ARQC from the card key; the answer carries the ARPC (tag 91)
+ATC=$(( RUN % 30000 + 100 ))
+send "{\"type\":\"BALANCE_INQUIRY\",$C,\"pin\":\"2468\",\"chip\":true,\"atc\":$ATC}"
+expect "I19 chip balance inquiry, ARQC verified, ARPC valid" "$R" '.actionCode + " " + (.chip.arpcValid|tostring) + " " + .chip.arc' "000 true 00"
+send "{\"type\":\"WITHDRAWAL\",$C,\"pin\":\"2468\",\"amount\":1000,\"chip\":true,\"atc\":$((ATC+1))}"
+expect "I20 chip cash withdrawal" "$R" '.actionCode + " " + (.chip.arpcValid|tostring)' "000 true"
+send "{\"type\":\"BALANCE_INQUIRY\",$C,\"pin\":\"2468\",\"chip\":true,\"atc\":$((ATC+2)),\"tamperArqc\":true}"
+expect "I21 wrong ARQC declined 129, no ARPC" "$R" '.actionCode + " " + (.chip.arpcReceived|tostring)' "129 false"
+send "{\"type\":\"BALANCE_INQUIRY\",$C,\"pin\":\"2468\",\"chip\":true,\"atc\":$ATC}"
+expect "I22 replayed ATC declined 129 with a decline ARPC" "$R" '.actionCode + " " + .chip.arc' "129 05"
+
 echo "== Result: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -44,7 +44,7 @@ final class PayShieldConnection implements Closeable {
     /** Sends "commandCode + body", returns the response WITHOUT the header. */
     String exchange(String commandAndBody) throws IOException {
         String header = nextHeader();
-        byte[] payload = (header + commandAndBody).getBytes(StandardCharsets.US_ASCII);
+        byte[] payload = (header + commandAndBody).getBytes(StandardCharsets.ISO_8859_1);   // 1 char = 1 byte (KQ is binary)
         if (payload.length > 0xFFFF) {
             throw new IllegalArgumentException("HSM message too long: " + payload.length);
         }
@@ -57,7 +57,7 @@ final class PayShieldConnection implements Closeable {
         if (resp.length != len) {
             throw new EOFException("HSM closed connection mid-response");
         }
-        String s = new String(resp, StandardCharsets.US_ASCII);
+        String s = new String(resp, StandardCharsets.ISO_8859_1);
         if (s.length() < headerLength + 4) {
             throw new IOException("HSM response too short");
         }

@@ -23,6 +23,7 @@ import java.util.function.Function;
  *            position 6 (card present) = '0'; otherwise POS
  *   reversal: field 56 = original MTI(4) + STAN(6) + local date-time(12) + acquirer id (LL + n..11);
  *            field 30 positions 1-12 = original amount, field 4 = amount actually completed (partial)
+ *   field 55: chip data (hex) to the engine; the response carries tag 91 (ARPC + ARC) when the ARQC was checked
  *   field 54 in responses: per amount 20 chars = account type(2) + amount type(2: 01 ledger, 02 available)
  *            + currency(3) + C/D + amount(12)
  * Repeat MTIs (xxx1) are normalised to xxx0 so duplicates match the original message.
@@ -86,7 +87,8 @@ public final class IsoMapper {
                 blankToNull(m.getString(125)),
                 amount(m, type),
                 m.getString(49), m.getString(11), m.getString(37), m.getString(7), m.getString(12),
-                m.getString(32), trim(m.getString(41)), mcc, trim(m.getString(43)), advice, original, completed);
+                m.getString(32), trim(m.getString(41)), mcc, trim(m.getString(43)), advice, original, completed,
+                m.hasField(55) ? ISOUtil.hexString(m.getBytes(55)) : null);
     }
 
     /** Response to a financial / authorization / reversal message: echoes the keys, adds 38, 39, 54. */
@@ -99,6 +101,7 @@ public final class IsoMapper {
         }
         if (r.authId() != null) resp.set(38, r.authId());
         resp.set(39, r.actionCode());
+        if (r.iccResponse() != null) resp.set(55, ISOUtil.hex2byte(r.iccResponse()));
         if (r.ledgerBalance() != null && r.availableBalance() != null) {
             String ccy = numericCurrency.apply(r.currencyCode());
             resp.set(54, additionalAmount("01", r, ccy) + additionalAmount("02", r, ccy));
