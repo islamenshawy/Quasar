@@ -8,7 +8,10 @@ cms:
     # DEV ONLY fixed keys so restarts can still decrypt stored PANs. Never use outside dev.
     pan-enc-key: ${CMS_PAN_ENC_KEY:ZGV2LW9ubHktcGFuLWVuYy1rZXktMzItYnl0ZXMtISE=}
     pan-hmac-key: ${CMS_PAN_HMAC_KEY:ZGV2LW9ubHktcGFuLWhtYWMta2V5LTMyLWJ5dGVzLSE=}
+  dexxis:
+    api-key: ${CMS_DEXXIS_API_KEY:dev-dexxis-key}
   dev:
+    user-password: ${CMS_DEV_PASSWORD:Dev-Passw0rd!}   # admin, supervisor, supervisor2, operator, viewer
     # TEST keys from scripts/seed-dev.sql, used only by the dev corehost simulator
     acquirer-zpk-clear: 4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E
     zmk-clear: 1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A

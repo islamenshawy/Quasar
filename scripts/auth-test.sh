@@ -11,15 +11,31 @@ BASE="${1:-http://localhost:8080}"
 SIM="$(dirname "$0")/../hsm-sim/HsmSimulator.java"
 KIOSK_ZPK="0B0B0B0B0B0B0B0B1616161616161616"      # ZPK_KIOSK in seed-dev.sql
 ACQ_ZPK="4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E"        # ZPK_COREHOST in seed-dev.sql
-OP="auth-test"
 RUN="$(date +%s)"
 PASS=0; FAIL=0; STAN=$(( RUN % 900000 + 100000 ))
 EGP=818
 
 ok()  { echo "  PASS  $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL  $1  ->  $2"; FAIL=$((FAIL+1)); }
-post() { curl -s -X POST "$BASE$1" -H 'Content-Type: application/json' -H "X-Operator: $OP" -d "$2"; }
-get()  { curl -s "$BASE$1" -H "X-Operator: $OP"; }
+# Credentials (dev profile defaults). Operator makes changes; supervisor approves maker-checker requests.
+CMS_USER="${CMS_USER:-operator}"; CMS_PASSWORD="${CMS_PASSWORD:-Dev-Passw0rd!}"
+SUP_USER="${SUP_USER:-supervisor}"; SUP_PASSWORD="${SUP_PASSWORD:-Dev-Passw0rd!}"
+DEXXIS_KEY="${CMS_DEXXIS_API_KEY:-dev-dexxis-key}"
+post() { # Dexxis endpoints authenticate with the API key, everything else as the operator
+  case "$1" in
+    /api/dexxis/*) curl -s -w "${W:-}" -X POST "$BASE$1" -H 'Content-Type: application/json' -H "X-Api-Key: $DEXXIS_KEY" -d "$2" ;;
+    *)             curl -s -w "${W:-}" -X POST "$BASE$1" -H 'Content-Type: application/json' -u "$CMS_USER:$CMS_PASSWORD" -d "$2" ;;
+  esac
+}
+get()  { curl -s -w "${W:-}" "$BASE$1" -u "$CMS_USER:$CMS_PASSWORD"; }
+put()  { curl -s -X PUT "$BASE$1" -H 'Content-Type: application/json' -u "$CMS_USER:$CMS_PASSWORD" -d "$2"; }
+# approve <response json>: if the response is a pending maker-checker request, approve it as the supervisor
+approve() {
+  local id; id=$(echo "$1" | jq -r '.requestId // empty' 2>/dev/null)
+  [ -z "$id" ] && { echo "$1"; return; }
+  curl -s -X POST "$BASE/api/admin/approvals/$id/approve" -H 'Content-Type: application/json' \
+       -u "$SUP_USER:$SUP_PASSWORD" -d '{"comment":"approved by test"}'
+}
 pb()   { java "$SIM" pinblock "$1" "$2" "$3"; }
 expect() { # name, response json, jq filter, expected
   local got; got=$(echo "$2" | jq -r "$3")
@@ -52,7 +68,9 @@ R=$(post /api/dexxis/cards/activate "{\"pan\":\"$PAN\",\"pinBlock\":\"$(pb "$PAN
 expect "A00 setup: card active" "$R" .result ACTIVE
 CARD=$(get "/api/admin/cards?accountId=$ACCT" | jq -r '.items[0].id')
 R=$(post /api/admin/accounts/$ACCT/entries '{"type":"FUNDING","amount":100000,"narrative":"test funding"}')
-expect "A01 funding 1000.00" "$R" .balance.available 100000
+expect "A01a funding needs approval (maker-checker)" "$R" .approvalPending true
+R=$(approve "$R"); expect "A01b supervisor approves" "$R" .status APPROVED
+R=$(get /api/admin/accounts/$ACCT); expect "A01c balance after approval 1000.00" "$R" .availableBalance 100000
 
 PIN_OK=$(pb "$PAN" 1234 "$ACQ_ZPK"); PIN_BAD=$(pb "$PAN" 9999 "$ACQ_ZPK")
 
@@ -92,8 +110,7 @@ auth REFUND POS 2000 "" '{"terminalId":"POS00001"}'; expect "A21 refund 20.00" "
 auth PURCHASE ECOM 1000 "";                  expect "A22 e-commerce off for P01 -> 119" "$R" .actionCode 119
 
 # ---------- controls, status ----------
-R=$(curl -s -X PUT "$BASE/api/admin/cards/$CARD/limits" -H 'Content-Type: application/json' -H "X-Operator: $OP" \
-    -d '{"atmEnabled":true,"posEnabled":true,"ecomEnabled":true,"perTxnWdLimit":5000,"reason":"test"}')
+R=$(approve "$(put /api/admin/cards/$CARD/limits '{"atmEnabled":true,"posEnabled":true,"ecomEnabled":true,"perTxnWdLimit":5000,"reason":"test"}')")
 auth WITHDRAWAL ATM 6000 "$PIN_OK";          expect "A23 card-level limit override -> 121" "$R" .actionCode 121
 auth PURCHASE ECOM 1000 "";                  expect "A24 card e-com on, product off -> still 119" "$R" .actionCode 119
 post /api/admin/cards/$CARD/status '{"status":"BLOCKED","reason":"test"}' >/dev/null

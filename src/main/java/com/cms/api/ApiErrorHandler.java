@@ -7,6 +7,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.LockedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -24,6 +27,7 @@ public class ApiErrorHandler {
         HttpStatus status = switch (e.code()) {
             case "CARD_NOT_FOUND", "ACCOUNT_NOT_FOUND", "NOT_FOUND" -> HttpStatus.NOT_FOUND;
             case "DUPLICATE" -> HttpStatus.CONFLICT;
+            case "FOUR_EYES" -> HttpStatus.FORBIDDEN;
             default -> HttpStatus.UNPROCESSABLE_ENTITY;
         };
         return ResponseEntity.status(status).body(Map.of("code", e.code(), "message", e.getMessage()));
@@ -35,6 +39,18 @@ public class ApiErrorHandler {
         log.warn("Duplicate key: {}", e.getMostSpecificCause().getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("code", "DUPLICATE", "message", "Record already exists"));
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    ResponseEntity<Map<String, String>> signIn(AuthenticationException e) {
+        String code = e instanceof LockedException ? "ACCOUNT_LOCKED"
+                : e instanceof DisabledException ? "ACCOUNT_DISABLED" : "BAD_CREDENTIALS";
+        String msg = switch (code) {
+            case "ACCOUNT_LOCKED" -> "Account locked after too many failed attempts; ask an administrator";
+            case "ACCOUNT_DISABLED" -> "Account disabled";
+            default -> "Wrong username or password";
+        };
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("code", code, "message", msg));
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

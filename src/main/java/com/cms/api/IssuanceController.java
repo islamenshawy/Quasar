@@ -1,5 +1,6 @@
 package com.cms.api;
 
+import com.cms.security.Operator;
 import com.cms.account.AccountService;
 import com.cms.card.CardIssuanceService;
 import com.cms.card.CardIssuanceService.CardSummary;
@@ -16,9 +17,7 @@ import java.util.Map;
 /**
  * Card issuance and the reference data every console form needs.
  *
- * TEST ENVIRONMENT: the operator is taken from the X-Operator header.
- * Before any shared use this must be replaced by real authentication (Spring Security,
- * roles such as ISSUANCE_OPERATOR / SUPERVISOR), since issueCard returns a full PAN.
+ * The operator is the signed-in user (CMS-060). Issuing returns a full PAN once: OPERATOR role and up.
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -62,7 +61,7 @@ public class IssuanceController {
 
     @PostMapping("/accounts/{id}/cards")
     public IssuedCard issue(@PathVariable long id, @RequestBody Map<String, String> body,
-                            @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
+                            @Operator String op) {
         return cards.issueCard(new IssueCardRequest(id, body.get("productCode"),
                 body.get("embossingName"), body.get("branchId")), op);
     }

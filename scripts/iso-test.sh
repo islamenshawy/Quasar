@@ -11,12 +11,29 @@ set -uo pipefail
 BASE="${1:-http://localhost:8080}"
 SIM="$(dirname "$0")/../hsm-sim/HsmSimulator.java"
 KIOSK_ZPK="0B0B0B0B0B0B0B0B1616161616161616"
-OP="iso-test"; RUN="$(date +%s)"; PASS=0; FAIL=0
+RUN="$(date +%s)"; PASS=0; FAIL=0
 
 ok()  { echo "  PASS  $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL  $1  ->  $2"; FAIL=$((FAIL+1)); }
-post() { curl -s -X POST "$BASE$1" -H 'Content-Type: application/json' -H "X-Operator: $OP" -d "$2"; }
-get()  { curl -s "$BASE$1" -H "X-Operator: $OP"; }
+# Credentials (dev profile defaults). Operator makes changes; supervisor approves maker-checker requests.
+CMS_USER="${CMS_USER:-operator}"; CMS_PASSWORD="${CMS_PASSWORD:-Dev-Passw0rd!}"
+SUP_USER="${SUP_USER:-supervisor}"; SUP_PASSWORD="${SUP_PASSWORD:-Dev-Passw0rd!}"
+DEXXIS_KEY="${CMS_DEXXIS_API_KEY:-dev-dexxis-key}"
+post() { # Dexxis endpoints authenticate with the API key, everything else as the operator
+  case "$1" in
+    /api/dexxis/*) curl -s -w "${W:-}" -X POST "$BASE$1" -H 'Content-Type: application/json' -H "X-Api-Key: $DEXXIS_KEY" -d "$2" ;;
+    *)             curl -s -w "${W:-}" -X POST "$BASE$1" -H 'Content-Type: application/json' -u "$CMS_USER:$CMS_PASSWORD" -d "$2" ;;
+  esac
+}
+get()  { curl -s -w "${W:-}" "$BASE$1" -u "$CMS_USER:$CMS_PASSWORD"; }
+put()  { curl -s -X PUT "$BASE$1" -H 'Content-Type: application/json' -u "$CMS_USER:$CMS_PASSWORD" -d "$2"; }
+# approve <response json>: if the response is a pending maker-checker request, approve it as the supervisor
+approve() {
+  local id; id=$(echo "$1" | jq -r '.requestId // empty' 2>/dev/null)
+  [ -z "$id" ] && { echo "$1"; return; }
+  curl -s -X POST "$BASE/api/admin/approvals/$id/approve" -H 'Content-Type: application/json' \
+       -u "$SUP_USER:$SUP_PASSWORD" -d '{"comment":"approved by test"}'
+}
 expect() { local got; got=$(echo "$2" | jq -r "$3"); [ "$got" = "$4" ] && ok "$1" || bad "$1" "expected $4, got $got :: $(echo "$2" | jq -c '{mti,actionCode,actionText,availableBalance,message}' 2>/dev/null || echo "$2")"; }
 send() { R=$(post /api/dev/iso/send "$1"); }
 TERM_ID="T${RUN: -7}"
@@ -32,7 +49,7 @@ ACCT=$(post /api/admin/customers/$CUST/accounts '{"accountTypeCode":"PREPAID","c
 PAN=$(post /api/admin/accounts/$ACCT/cards '{"productCode":"P01","branchId":"BR001"}' | jq -r .pan)
 post /api/dexxis/cards/activate "{\"pan\":\"$PAN\",\"pinBlock\":\"$(java "$SIM" pinblock "$PAN" 1234 "$KIOSK_ZPK")\",\"kioskId\":\"K01\"}" >/dev/null
 CARD=$(get "/api/admin/cards?accountId=$ACCT" | jq -r '.items[0].id')
-post /api/admin/accounts/$ACCT/entries '{"type":"FUNDING","amount":50000,"narrative":"iso test"}' >/dev/null
+approve "$(post /api/admin/accounts/$ACCT/entries '{"type":"FUNDING","amount":50000,"narrative":"iso test"}')" >/dev/null
 
 C="\"cardId\":$CARD,\"terminalId\":\"$TERM_ID\""
 send "{\"type\":\"BALANCE_INQUIRY\",$C,\"pin\":\"1234\"}"

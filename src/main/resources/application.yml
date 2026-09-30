@@ -8,6 +8,14 @@ spring:
   flyway:
     enabled: true
 
+server:
+  servlet:
+    session:
+      timeout: 30m              # console sign-in session
+      cookie:
+        http-only: true
+        same-site: lax
+
 cms:
   hsm:
     host: 10.0.0.50          # payShield 10K host port IP (test)
@@ -25,6 +33,10 @@ cms:
     kiosk-zpk-name: ZPK_KIOSK     # ZPK under which the kiosk EPP sends PIN blocks
     corehost-zpk-name: ZPK_COREHOST
     corehost-zmk-name: ZMK_COREHOST   # protects ZPKs received in 1804 key change
+  dexxis:
+    api-key: ${CMS_DEXXIS_API_KEY:}   # X-Api-Key Dexxis must send; empty = Dexxis calls refused
+  admin:
+    initial-password: ${CMS_ADMIN_PASSWORD:}   # first start only; generated and logged when empty
   iso:
     # BASE24 ISO 8583:1993 interface for the ATM / POS switch (CMS-051..054). Layout is provisional (IN-01).
     enabled: true

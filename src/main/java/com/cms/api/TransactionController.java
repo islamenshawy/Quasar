@@ -1,5 +1,6 @@
 package com.cms.api;
 
+import com.cms.security.Operator;
 import com.cms.auth.ActionCode;
 import com.cms.auth.TransactionQueryService;
 import com.cms.auth.TransactionQueryService.TxnView;
@@ -7,20 +8,20 @@ import com.cms.card.CardAdminService;
 import com.cms.card.CardAdminService.CardLimits;
 import com.cms.card.CardAdminService.CardView;
 import com.cms.card.CardAdminService.ControlsRequest;
-import com.cms.common.AuditLog;
+import com.cms.approval.ApprovalActions;
+import com.cms.approval.ApprovalService;
 import com.cms.common.Page;
 import com.cms.ledger.LedgerService;
 import com.cms.ledger.LedgerService.GlView;
 import com.cms.ledger.LedgerService.HoldView;
 import com.cms.ledger.LedgerService.JournalLine;
 import org.springframework.format.annotation.DateTimeFormat;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 /** Transactions, account ledger (statement, holds, manual entries), GL and card controls. */
 @RestController
@@ -34,13 +35,14 @@ public class TransactionController {
     private final TransactionQueryService txns;
     private final LedgerService ledger;
     private final CardAdminService cards;
-    private final AuditLog audit;
+    private final ApprovalService approvals;
 
-    public TransactionController(TransactionQueryService txns, LedgerService ledger, CardAdminService cards, AuditLog audit) {
+    public TransactionController(TransactionQueryService txns, LedgerService ledger, CardAdminService cards,
+                                 ApprovalService approvals) {
         this.txns = txns;
         this.ledger = ledger;
         this.cards = cards;
-        this.audit = audit;
+        this.approvals = approvals;
     }
 
     // ---------- transactions ----------
@@ -87,29 +89,18 @@ public class TransactionController {
         return ledger.holds(id, openOnly);
     }
 
-    /** FUNDING / CREDIT_ADJUSTMENT / DEBIT_ADJUSTMENT. Amount in minor units. */
+    /** FUNDING / CREDIT_ADJUSTMENT / DEBIT_ADJUSTMENT. Amount in minor units. Maker-checker: LEDGER_ENTRY. */
     @PostMapping("/accounts/{id}/entries")
-    @Transactional
-    public Map<String, Object> entry(@PathVariable long id, @RequestBody EntryRequest req,
-                                     @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
-        UUID journal = ledger.manualEntry(id, req.type(), req.amount(), req.narrative(), op);
-        audit.record(op, "LEDGER_" + req.type(), "account", id,
-                Map.of("amount", req.amount(), "narrative", req.narrative(), "journal", journal.toString()));
-        return Map.of("journalId", journal, "balance", ledger.balance(id));
+    public ResponseEntity<Object> entry(@PathVariable long id, @RequestBody EntryRequest req, @Operator String op) {
+        return approvals.submit("LEDGER_ENTRY", "account", id, req.type() + " " + req.amount() + " (minor units) on account "
+                + id + ": " + req.narrative(), new ApprovalActions.LedgerEntry(id, req.type(), req.amount(), req.narrative()), op)
+                .toResponse();
     }
 
     @PostMapping("/holds/{id}/release")
-    @Transactional
-    public Map<String, Object> releaseHold(@PathVariable long id, @RequestBody ReasonRequest req,
-                                           @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
-        if (req.reason() == null || req.reason().isBlank()) {
-            throw new com.cms.card.IssuanceException("INVALID_REQUEST", "reason is required");
-        }
-        if (!ledger.closeHold(id, "RELEASED", 0, req.reason().trim(), op)) {
-            throw new com.cms.card.IssuanceException("INVALID_STATUS", "Hold is not open");
-        }
-        audit.record(op, "RELEASE_HOLD", "hold", id, Map.of("reason", req.reason().trim()));
-        return Map.of("released", true);
+    public ResponseEntity<Object> releaseHold(@PathVariable long id, @RequestBody ReasonRequest req, @Operator String op) {
+        return approvals.submit("HOLD_RELEASE", "hold", id, "Release hold " + id + ": " + req.reason(),
+                new ApprovalActions.HoldRelease(id, req.reason()), op).toResponse();
     }
 
     @GetMapping("/gl-accounts")
@@ -125,14 +116,14 @@ public class TransactionController {
     }
 
     @PutMapping("/cards/{id}/limits")
-    public CardLimits updateLimits(@PathVariable long id, @RequestBody ControlsRequest req,
-                                   @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
-        return cards.updateControls(id, req, op);
+    public ResponseEntity<Object> updateLimits(@PathVariable long id, @RequestBody ControlsRequest req, @Operator String op) {
+        return approvals.submit("CARD_LIMITS", "card", id, "Card " + cards.get(id).maskedPan() + " controls/limits: " + req.reason(),
+                new ApprovalActions.CardLimits(id, req), op).toResponse();
     }
 
     @PostMapping("/cards/{id}/reset-pin-tries")
-    public CardView resetPinTries(@PathVariable long id, @RequestBody ReasonRequest req,
-                                  @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
-        return cards.resetPinTries(id, req.reason(), op);
+    public ResponseEntity<Object> resetPinTries(@PathVariable long id, @RequestBody ReasonRequest req, @Operator String op) {
+        return approvals.submit("RESET_PIN_TRIES", "card", id, "Reset PIN tries on card " + cards.get(id).maskedPan(),
+                new ApprovalActions.Reason(id, req.reason()), op).toResponse();
     }
 }
