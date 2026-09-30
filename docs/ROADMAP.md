@@ -101,7 +101,8 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | ID | Item | Status |
 |---|---|---|
 | CMS-056 | SOAP endpoint from Dexxis WSDL | Blocked (IN-02) |
-| CMS-057 | ARQC verification / ARPC generation (KQ) + hsm-sim support | Blocked (IN-03) |
+| CMS-057 | ARQC verification / ARPC generation (KQ) + hsm-sim support | Done, provisional; confirm KQ layout, key ownership (IN-03) and CDOL1 per chip profile |
+| CMS-068 | Issuer scripts (PIN unblock / change on chip), CDA/DDA key management | Planned |
 | CMS-058 | EMV data in perso response if CMS owns ICC key derivation | Blocked (IN-03) |
 | CMS-059 | Final track discretionary data per product | Blocked (IN-04) |
 

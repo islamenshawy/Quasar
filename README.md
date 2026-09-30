@@ -5,7 +5,7 @@ Issuer-side card management: operator-driven card issuance, perso data for Dexxi
 | | |
 |---|---|
 | Version | **0.4.0** (see [CHANGELOG](CHANGELOG.md)) |
-| HSM simulator | hsm-sim **1.0.0** |
+| HSM simulator | hsm-sim **1.1.0** (adds EMV KQ) |
 | Stack | Java 21, Spring Boot 3, jPOS, PostgreSQL, Flyway · console: Vue 3 + Quasar (`ui/`) |
 | Environments | DEV and TEST only. **Test data only.** |
 

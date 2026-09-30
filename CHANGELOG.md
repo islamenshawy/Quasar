@@ -7,6 +7,18 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 ## [Unreleased]
 
 ### Added
+- **EMV chip cryptograms**: ARQC verification and ARPC generation through the HSM (`KQ`), EMV option A card keys from the product's IMK-AC, cryptogram versions Visa CVN10 (card key) and EMV common session key (M/Chip, Visa CVN18). The data block is built from field 55 in the order of the product's data list (`9F10:CVR` takes the Visa CVR). A wrong ARQC declines 129; an ATC not above the last one seen on the card declines 129 (replay). Every answer to a verified chip request carries field 55 tag 91 = ARPC + ARC (00 approved, 05 declined). `iso_transaction.emv_arqc_ok` is recorded. **KQ field layout and the data list are provisional until IN-03 / the chip profile are confirmed.** (CMS-057)
+- **hsm-sim 1.1.0**: `KQ` (modes 0/1/2, schemes 0/1), test key IMK_AC_P01, self-test cases.
+- Corehost simulator: chip mode builds field 55 with an ARQC from the dev IMK-AC (card emulation, dev only) and checks the returned ARPC; console Switch simulator has a Chip (EMV) switch. Product setup: cryptogram version and data list.
+- `scripts/iso-test.sh`: chip cases I19-I22 (valid ARQC with ARPC check, chip withdrawal, wrong ARQC, replayed ATC).
+
+### Changed
+- HSM messages are exchanged byte for byte (ISO-8859-1 instead of US-ASCII) so binary fields pass unchanged; ASCII commands are unaffected.
+
+### Migrations
+- `V8__emv_cryptograms.sql`: `card_product.emv_scheme`, `card_product.emv_data_list`, `card.last_atc`.
+- Seed: `scripts/seed-dev.sql` adds IMK_AC_P01 and links it to P01 and P02 (rerun it on DEV).
+
 - **Card replacement**: reasons RENEWAL, DAMAGED, LOST, STOLEN, NOT_RECEIVED, OTHER; same card number with the next PSN and a new expiry, or a new number (always for lost / stolen / not received, which also blocks the old card at once). The old card works until the replacement is activated at the kiosk, then it is cancelled. Channel switches and limit overrides carry over. Maker-checker action CARD_REPLACE (direct by default). (CMS-080)
 - **Renewal**: product settings auto-renew, lead days, same number; the CARD_RENEWAL job creates renewals that wait for print. (CMS-081)
 - **Batch scheduler**: jobs with cron schedules and run history, one run at a time (also across instances), run now by a supervisor, schedule changes through maker-checker (BATCH_JOB_UPDATE). Jobs: CARD_EXPIRY, CARD_RENEWAL, HOLD_EXPIRY, STALE_PENDING_PRINT (product limit, default 30 days), USAGE_CLEANUP. (CMS-082, CMS-083)

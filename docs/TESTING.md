@@ -99,6 +99,9 @@ Dev profile only. Every case goes through the real TCP interface via the corehos
 | I13-I14 | PIN change with field 125, then new PIN | 000, 000 |
 | I15-I16 | 1804/811 key change, then a PIN under the new ZPK | 800, 000 |
 | I17-I18 | Messages recorded; seeded ZPK restored | pass |
+| I19-I20 | Chip balance inquiry and cash with a valid ARQC | 000; field 55 tag 91 ARPC valid, ARC 00 |
+| I21 | Chip with a tampered ARQC | 129, no ARPC |
+| I22 | Chip with a replayed ATC | 129, ARPC with ARC 05 |
 
 ## 3c. Security catalogue (`scripts/security-test.sh`)
 
