@@ -1,7 +1,9 @@
 package com.cms.approval;
 
 import com.cms.account.AccountService;
+import com.cms.batch.BatchService;
 import com.cms.card.CardAdminService;
+import com.cms.card.CardIssuanceService;
 import com.cms.card.CardAdminService.ControlsRequest;
 import com.cms.card.IssuanceException;
 import com.cms.common.AuditLog;
@@ -34,10 +36,12 @@ public class ApprovalActions {
     public record CardLimits(long cardId, ControlsRequest data) {}
     public record StatusChange(long id, String status, String reason) {}
     public record Reason(long id, String reason) {}
+    public record CardReplace(long cardId, String reason, boolean samePan, String embossingName, String branchId) {}
+    public record BatchJobUpdate(String code, String cron, boolean enabled) {}
 
     public ApprovalActions(ApprovalService approvals, ReferenceDataService ref, Settings settings,
                            LedgerService ledger, CardAdminService cards, CustomerService customers,
-                           AccountService accounts, AuditLog audit) {
+                           AccountService accounts, AuditLog audit, CardIssuanceService issuance, BatchService batch) {
         approvals.register("CURRENCY_SAVE", CurrencySave.class, (p, op) -> ref.saveCurrency(p.code(), p.data(), p.create(), op));
         approvals.register("SEGMENT_SAVE", SegmentSave.class, (p, op) -> ref.saveSegment(p.code(), p.data(), p.create(), op));
         approvals.register("ACCOUNT_TYPE_SAVE", AccountTypeSave.class, (p, op) -> ref.saveAccountType(p.code(), p.data(), p.create(), op));
@@ -68,5 +72,10 @@ public class ApprovalActions {
         approvals.register("ACCOUNT_STATUS", StatusChange.class, (p, op) -> accounts.changeStatus(p.id(), p.status(), p.reason(), op));
         approvals.register("CARD_STATUS", StatusChange.class, (p, op) -> cards.changeStatus(p.id(), p.status(), p.reason(), op));
         approvals.register("RESET_PIN_TRIES", Reason.class, (p, op) -> cards.resetPinTries(p.id(), p.reason(), op));
+        // the full PAN of a new-number replacement is returned only when the action runs directly (no approval);
+        // after an approval the maker uses "Show card number for printing" on the pending card
+        approvals.register("CARD_REPLACE", CardReplace.class, (p, op) -> issuance.issueReplacement(p.cardId(), p.reason(),
+                p.samePan(), p.embossingName(), p.branchId(), "REPLACEMENT", op));
+        approvals.register("BATCH_JOB_UPDATE", BatchJobUpdate.class, (p, op) -> batch.update(p.code(), p.cron(), p.enabled(), op));
     }
 }

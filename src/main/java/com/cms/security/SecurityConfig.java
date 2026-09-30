@@ -47,7 +47,7 @@ import java.util.Map;
  *
  *   GET  /api/admin/**                 any role
  *   write /api/admin/**                OPERATOR, SUPERVISOR, ADMIN
- *   write /api/admin/setup/**          SUPERVISOR, ADMIN
+ *   write /api/admin/setup/**, batch   SUPERVISOR, ADMIN
  *   approve / reject                   SUPERVISOR, ADMIN (and never the maker)
  *   /api/admin/users/**, policy writes ADMIN
  *
@@ -110,7 +110,7 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.GET, "/api/admin/**").hasAnyRole(ANY_ROLE)
                     .requestMatchers(HttpMethod.PUT, "/api/admin/approval-policy/**").hasRole("ADMIN")
                     .requestMatchers("/api/admin/approvals/*/approve", "/api/admin/approvals/*/reject").hasAnyRole(SUPERVISORS)
-                    .requestMatchers("/api/admin/setup/**").hasAnyRole(SUPERVISORS)
+                    .requestMatchers("/api/admin/setup/**", "/api/admin/batch/**").hasAnyRole(SUPERVISORS)
                     .requestMatchers("/api/admin/**").hasAnyRole(WRITERS)
                     .requestMatchers("/api/**").denyAll()
                     .anyRequest().permitAll());

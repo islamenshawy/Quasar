@@ -107,7 +107,7 @@ public class AuthorizationService {
         long txnId = insertTxn(r);
         if (r.type() == TxnType.REVERSAL) return reversal(r, txnId);
 
-        Ctx c = loadCard(r.pan());
+        Ctx c = loadCard(r.pan(), presentedExpiry(r));
         if (c == null) return finish(txnId, INVALID_CARD, "card not found", null);
         jdbc.update("UPDATE iso_transaction SET card_id = ?, account_id = ? WHERE id = ?", c.cardId, c.accountId, txnId);
 
@@ -603,9 +603,26 @@ public class AuthorizationService {
               LEFT JOIN account_type t ON t.code = a.account_type_code
             """;
 
-    private Ctx loadCard(String pan) {
-        return jdbc.query(CTX_SELECT + " WHERE k.pan_hash = ? FOR UPDATE OF k, a",
-                rs -> rs.next() ? mapCtx(rs) : null, (Object) panCrypto.hash(pan));
+    /**
+     * Several cards may share a PAN after a same-PAN renewal: take the one whose expiry matches what the
+     * terminal read, otherwise the active one, otherwise the newest.
+     */
+    private Ctx loadCard(String pan, String expiry) {
+        return jdbc.query(CTX_SELECT + """
+                 WHERE k.pan_hash = ?
+                 ORDER BY COALESCE(k.expiry_yymm = ?, FALSE) DESC,
+                          CASE k.status WHEN 'ACTIVE' THEN 0 WHEN 'PIN_BLOCKED' THEN 1 WHEN 'BLOCKED' THEN 2
+                                        WHEN 'PENDING_PRINT' THEN 4 WHEN 'PRINTED' THEN 4 ELSE 3 END,
+                          k.id DESC
+                 LIMIT 1 FOR UPDATE OF k, a
+                """, rs -> rs.next() ? mapCtx(rs) : null, panCrypto.hash(pan), expiry);
+    }
+
+    private static String presentedExpiry(AuthRequest r) {
+        if (r.expiryYYMM() != null && !r.expiryYYMM().isBlank()) return r.expiryYYMM();
+        if (r.track2() == null || r.track2().isBlank()) return null;
+        Track2 t = Track2.parse(r.track2());
+        return t == null ? null : t.expiry();
     }
 
     private Ctx loadCardById(long cardId) {

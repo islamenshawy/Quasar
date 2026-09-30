@@ -46,7 +46,10 @@ public class ReferenceDataService {
                           int validityMonths, String chipProfile, String pvki, String pvkKeyName,
                           String cvkKeyName, String imkAcKeyName, int pinTryLimit, int dailyWdCount,
                           long dailyWdAmount, long perTxnWdMax, int maxCardsPerAccount, boolean active,
-                          long cardsIssued, long rangeRemaining, UsageSettings usage) {}
+                          long cardsIssued, long rangeRemaining, UsageSettings usage, RenewalSettings renewal) {}
+
+    /** Renewal and print housekeeping (batch jobs CARD_RENEWAL, STALE_PENDING_PRINT). */
+    public record RenewalSettings(Boolean autoRenew, Integer leadDays, Boolean samePan, Integer pendingPrintMaxDays) {}
 
     /** Channel switches, POS limits, fees and authorization options of a product. Amounts in minor units. */
     public record UsageSettings(Boolean atmEnabled, Boolean posEnabled, Boolean ecomEnabled, Integer dailyPosCount,
@@ -60,7 +63,7 @@ public class ReferenceDataService {
                                  Integer validityMonths, String chipProfile, String pvki, String pvkKeyName,
                                  String cvkKeyName, String imkAcKeyName, Integer pinTryLimit,
                                  Integer dailyWdCount, Long dailyWdAmount, Long perTxnWdMax,
-                                 Integer maxCardsPerAccount, Boolean active, UsageSettings usage) {}
+                                 Integer maxCardsPerAccount, Boolean active, UsageSettings usage, RenewalSettings renewal) {}
 
     public record Eligibility(String accountTypeCode, String segmentCode) {}
 
@@ -288,7 +291,8 @@ public class ReferenceDataService {
                    p.max_cards_per_account, p.active,
                    (SELECT count(*) FROM card c WHERE c.product_id = p.id),
                    p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount),
-                   COALESCE(p.per_txn_pos_max, p.per_txn_wd_max), p.wd_fee, p.bi_fee, p.verify_cvv, p.preauth_hold_days
+                   COALESCE(p.per_txn_pos_max, p.per_txn_wd_max), p.wd_fee, p.bi_fee, p.verify_cvv, p.preauth_hold_days,
+                   p.auto_renew, p.renewal_lead_days, p.renew_same_pan, p.pending_print_max_days
               FROM card_product p
             """;
 
@@ -328,6 +332,7 @@ public class ReferenceDataService {
                 r.dailyWdCount(), r.dailyWdAmount(), r.perTxnWdMax(), r.maxCardsPerAccount(),
                 r.active() == null || r.active(), op);
         saveUsage(id, usageOrDefault(r), op);
+        saveRenewal(id, r.renewal() == null ? new RenewalSettings(true, 30, true, 30) : r.renewal());
         audit.record(op, "CREATE_PRODUCT", "card_product", id, Map.of("code", code, "bin", r.bin()));
         return product(code);
     }
@@ -353,6 +358,7 @@ public class ReferenceDataService {
                 r.dailyWdCount(), r.dailyWdAmount(), r.perTxnWdMax(), r.maxCardsPerAccount(),
                 r.active() == null || r.active(), op, cur.id());
         saveUsage(cur.id(), r.usage() == null ? cur.usage() : r.usage(), op);
+        saveRenewal(cur.id(), r.renewal() == null ? cur.renewal() : r.renewal());
         audit.record(op, "UPDATE_PRODUCT", "card_product", cur.id(), Map.of("code", code));
         return product(code);
     }
@@ -432,6 +438,15 @@ public class ReferenceDataService {
                 u.wdFee(), u.biFee(), Boolean.TRUE.equals(u.verifyCvv()), u.preauthHoldDays(), op, productId);
     }
 
+    private void saveRenewal(long productId, RenewalSettings s) {
+        int lead = s.leadDays() == null ? 30 : s.leadDays();
+        int stale = s.pendingPrintMaxDays() == null ? 30 : s.pendingPrintMaxDays();
+        if (lead < 1 || lead > 180) bad("Renewal lead time must be 1 to 180 days");
+        if (stale < 1 || stale > 365) bad("Uncollected print limit must be 1 to 365 days");
+        jdbc.update("UPDATE card_product SET auto_renew = ?, renewal_lead_days = ?, renew_same_pan = ?, pending_print_max_days = ? WHERE id = ?",
+                !Boolean.FALSE.equals(s.autoRenew()), lead, !Boolean.FALSE.equals(s.samePan()), stale, productId);
+    }
+
     private void requireKey(String name, String type) {
         if (name == null || name.isBlank()) bad(type + " key is required");
         if (!exists("SELECT count(*) FROM hsm_key WHERE key_name = ? AND key_type = ? AND active", name, type)) {
@@ -449,7 +464,8 @@ public class ReferenceDataService {
                 rs.getLong(27), Math.max(0, end - next + 1),
                 new UsageSettings(rs.getBoolean(28), rs.getBoolean(29), rs.getBoolean(30), rs.getInt(31),
                         rs.getLong(32), rs.getLong(33), rs.getLong(34), rs.getLong(35), rs.getBoolean(36),
-                        rs.getInt(37)));
+                        rs.getInt(37)),
+                new RenewalSettings(rs.getBoolean(38), rs.getInt(39), rs.getBoolean(40), rs.getInt(41)));
     }
 
     // =========================================================================

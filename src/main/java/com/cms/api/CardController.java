@@ -55,6 +55,22 @@ public class CardController {
                 new ApprovalActions.StatusChange(id, req.status(), req.reason()), op).toResponse();
     }
 
+    public record ReplaceRequest(String reason, boolean samePan, String embossingName, String branchId) {}
+
+    /** Replace or renew a card (maker-checker CARD_REPLACE). Direct runs return the new card with its PAN once. */
+    @PostMapping("/{id}/replace")
+    public ResponseEntity<Object> replace(@PathVariable long id, @RequestBody ReplaceRequest r, @Operator String op) {
+        return approvals.submit("CARD_REPLACE", "card", id, "Replace card " + cards.get(id).maskedPan() + " (" + r.reason()
+                + (r.samePan() ? ", same number" : ", new number") + ")",
+                new ApprovalActions.CardReplace(id, r.reason(), r.samePan(), r.embossingName(), r.branchId()), op).toResponse();
+    }
+
+    /** Full PAN of a card waiting for print, to key into Dexxis. Audited; at most 3 times per card. */
+    @PostMapping("/{id}/reveal-pan")
+    public Map<String, String> revealPan(@PathVariable long id, @Operator String op) {
+        return Map.of("pan", cards.revealPanForPrint(id, op));
+    }
+
     /** Find a card by full PAN. PAN in the body, never in the URL. */
     @PostMapping("/lookup")
     public Map<String, Long> lookup(@RequestBody Map<String, String> body,

@@ -60,6 +60,9 @@ public class CardIssuanceService {
     // ---------------- implementation ----------------
 
     private static final DateTimeFormatter YYMM = DateTimeFormatter.ofPattern("yyMM");
+    /** Several cards may share a PAN (renewal / same-PAN replacement): Dexxis works on the one in production. */
+    private static final String IN_PRODUCTION_FIRST =
+            " ORDER BY CASE WHEN c.status IN ('PENDING_PRINT','PRINTED') THEN 0 ELSE 1 END, c.id DESC LIMIT 1";
     private static final List<String> LIVE_STATUSES =
             List.of("PENDING_PRINT", "PRINTED", "ACTIVE", "BLOCKED", "PIN_BLOCKED");
 
@@ -162,17 +165,18 @@ public class CardIssuanceService {
     @Transactional
     public PersoData getPersoData(String pan, String requester) {
         requireValidPan(pan);
-        record Row(long id, String status, String expiry, String embossing, long productId,
+        record Row(long id, String status, String expiry, String embossing, long productId, String psn,
                    String accountNumber, String customerRef) {}
         Row r = jdbc.query("""
                 SELECT c.id, c.status, c.expiry_yymm, c.embossing_name, c.product_id,
-                       a.account_number, cu.external_ref
+                       a.account_number, cu.external_ref, c.psn
                   FROM card c
                   JOIN account a   ON a.id = c.account_id
                   JOIN customer cu ON cu.id = c.customer_id
-                 WHERE c.pan_hash = ? FOR UPDATE OF c
-                """, rs -> rs.next() ? new Row(rs.getLong(1), rs.getString(2), rs.getString(3),
-                        rs.getString(4), rs.getLong(5), rs.getString(6), rs.getString(7)) : null,
+                 WHERE c.pan_hash = ?
+                """ + IN_PRODUCTION_FIRST + " FOR UPDATE OF c",
+                rs -> rs.next() ? new Row(rs.getLong(1), rs.getString(2), rs.getString(3),
+                        rs.getString(4), rs.getLong(5), rs.getString(8), rs.getString(6), rs.getString(7)) : null,
                 panCrypto.hash(pan));
 
         if (r == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
@@ -203,7 +207,7 @@ public class CardIssuanceService {
                 """, r.id());
         audit(requester, "PERSO_FETCH", "card", r.id(), "{}");
 
-        return new PersoData(pan, "00", r.expiry(), p.serviceCode(), r.embossing(), cvv1, icvv, cvv2,
+        return new PersoData(pan, r.psn(), r.expiry(), p.serviceCode(), r.embossing(), cvv1, icvv, cvv2,
                 track1, track2, p.chipProfile(), p.scheme(), p.cardType(), p.cardTier(),
                 r.accountNumber(), r.customerRef());
     }
@@ -218,8 +222,9 @@ public class CardIssuanceService {
         CardRow c = jdbc.query("""
                 SELECT c.id, c.status, c.expiry_yymm, c.pvki, p.pvk_key_name
                   FROM card c JOIN card_product p ON p.id = c.product_id
-                 WHERE c.pan_hash = ? FOR UPDATE OF c
-                """, rs -> rs.next() ? new CardRow(rs.getLong(1), rs.getString(2), rs.getString(3),
+                 WHERE c.pan_hash = ?
+                """ + IN_PRODUCTION_FIRST + " FOR UPDATE OF c",
+                rs -> rs.next() ? new CardRow(rs.getLong(1), rs.getString(2), rs.getString(3),
                         rs.getString(4), rs.getString(5)) : null,
                 panCrypto.hash(req.pan()));
 
@@ -245,6 +250,7 @@ public class CardIssuanceService {
                 """, pvv, c.id());
 
         history(c.id(), c.status(), "ACTIVE", "printed and PIN set", "KIOSK:" + req.kioskId());
+        retirePredecessor(c.id(), "KIOSK:" + req.kioskId());
         audit("KIOSK", "ACTIVATE_CARD", "card", c.id(), "{\"kiosk\":\"" + safe(req.kioskId()) + "\"}");
     }
 
@@ -255,7 +261,7 @@ public class CardIssuanceService {
     public void cancelCard(String pan, String reason, String actor) {
         requireValidPan(pan);
         record Row(long id, String status) {}
-        Row r = jdbc.query("SELECT id, status FROM card WHERE pan_hash = ? FOR UPDATE",
+        Row r = jdbc.query("SELECT c.id, c.status FROM card c WHERE c.pan_hash = ?" + IN_PRODUCTION_FIRST + " FOR UPDATE",
                 rs -> rs.next() ? new Row(rs.getLong(1), rs.getString(2)) : null, panCrypto.hash(pan));
         if (r == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
         if (!r.status().equals("PENDING_PRINT") && !r.status().equals("PRINTED")) {
@@ -264,6 +270,123 @@ public class CardIssuanceService {
         jdbc.update("UPDATE card SET status = 'CANCELLED', version = version + 1 WHERE id = ?", r.id());
         history(r.id(), r.status(), "CANCELLED", reason, actor);
         audit(actor, "CANCEL_CARD", "card", r.id(), "{\"reason\":\"" + safe(reason) + "\"}");
+    }
+
+    // =========================================================================
+    // 5. REPLACEMENT / RENEWAL
+    // =========================================================================
+
+    public static final List<String> REPLACEMENT_REASONS =
+            List.of("RENEWAL", "DAMAGED", "LOST", "STOLEN", "NOT_RECEIVED", "OTHER");
+
+    /**
+     * New card replacing an existing one, PENDING_PRINT like any issuance.
+     *
+     * samePan: keeps the PAN with the next PSN and a new expiry (renewal, damaged). LOST, STOLEN and
+     * NOT_RECEIVED always get a new PAN, and a live old card is set to LOST / STOLEN at once.
+     * Otherwise the old card keeps working until the replacement is activated at the kiosk, which
+     * cancels it. Channel switches and limit overrides are carried over.
+     */
+    @Transactional
+    public IssuedCard issueReplacement(long oldCardId, String reason, boolean samePan, String embossingOverride,
+                                       String location, String channel, String operator) {
+        if (!REPLACEMENT_REASONS.contains(reason)) {
+            throw new IssuanceException("INVALID_REQUEST", "Reason must be one of " + REPLACEMENT_REASONS);
+        }
+        record Old(long id, String status, byte[] panEnc, byte[] panHash, long productId, long accountId,
+                   long customerId, String embossing, String acctStatus, String custStatus, boolean productActive,
+                   int validity, String serviceCode, String pvki, boolean atm, boolean pos, boolean ecom,
+                   Integer wdCount, Long wdAmount, Long wdPer, Integer posCount, Long posAmount, Long posPer) {}
+        Old o = jdbc.query("""
+                SELECT k.id, k.status, k.pan_enc, k.pan_hash, k.product_id, k.account_id, k.customer_id, k.embossing_name,
+                       a.status, cu.status, p.active, p.validity_months, p.service_code, p.pvki,
+                       k.atm_enabled, k.pos_enabled, k.ecom_enabled, k.daily_wd_count_limit, k.daily_wd_amount_limit,
+                       k.per_txn_wd_limit, k.daily_pos_count_limit, k.daily_pos_amount_limit, k.per_txn_pos_limit
+                  FROM card k JOIN account a ON a.id = k.account_id JOIN customer cu ON cu.id = k.customer_id
+                  JOIN card_product p ON p.id = k.product_id
+                 WHERE k.id = ? FOR UPDATE OF k
+                """, rs -> rs.next() ? new Old(rs.getLong(1), rs.getString(2), rs.getBytes(3), rs.getBytes(4),
+                        rs.getLong(5), rs.getLong(6), rs.getLong(7), rs.getString(8), rs.getString(9), rs.getString(10),
+                        rs.getBoolean(11), rs.getInt(12), rs.getString(13), rs.getString(14), rs.getBoolean(15),
+                        rs.getBoolean(16), rs.getBoolean(17), (Integer) rs.getObject(18), (Long) rs.getObject(19),
+                        (Long) rs.getObject(20), (Integer) rs.getObject(21), (Long) rs.getObject(22),
+                        (Long) rs.getObject(23)) : null, oldCardId);
+        if (o == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
+        if (List.of("CANCELLED", "PENDING_PRINT", "PRINTED").contains(o.status())) {
+            throw new IssuanceException("INVALID_STATUS", "A " + o.status() + " card cannot be replaced"
+                    + (o.status().startsWith("P") ? "; cancel it and issue a new card instead" : ""));
+        }
+        if (!"ACTIVE".equals(o.acctStatus())) throw new IssuanceException("INVALID_STATUS", "Account is " + o.acctStatus());
+        if (!"ACTIVE".equals(o.custStatus())) throw new IssuanceException("INVALID_STATUS", "Customer is " + o.custStatus());
+        if (!o.productActive()) {
+            throw new IssuanceException("INVALID_STATUS", "Card product is inactive; issue a card of an active product");
+        }
+        Integer inProduction = jdbc.queryForObject("""
+                SELECT count(*) FROM card WHERE replaces_card_id = ? AND status IN ('PENDING_PRINT','PRINTED')
+                """, Integer.class, oldCardId);
+        if (inProduction > 0) {
+            throw new IssuanceException("DUPLICATE", "A replacement for this card is already waiting for print");
+        }
+
+        boolean compromised = List.of("LOST", "STOLEN", "NOT_RECEIVED").contains(reason);
+        if (compromised && samePan) throw new IssuanceException("INVALID_REQUEST", reason + " needs a new card number");
+        if (List.of("LOST", "STOLEN").contains(reason) && LIVE_STATUSES.contains(o.status())) {
+            jdbc.update("UPDATE card SET status = ?, version = version + 1 WHERE id = ?", reason, oldCardId);
+            history(oldCardId, o.status(), reason, "reported " + reason.toLowerCase() + " at replacement", operator);
+        }
+
+        String pan;
+        String psn;
+        if (samePan) {
+            pan = panCrypto.decrypt(o.panEnc());
+            Integer maxPsn = jdbc.queryForObject("SELECT max(psn::int) FROM card WHERE pan_hash = ?",
+                    Integer.class, (Object) o.panHash());
+            int next = (maxPsn == null ? 0 : maxPsn) + 1;
+            if (next > 99) throw new IssuanceException("RANGE_EXHAUSTED", "PSN range exhausted for this PAN; use a new number");
+            psn = String.format("%02d", next);
+        } else {
+            pan = panAllocator.nextPan(o.productId());
+            psn = "00";
+        }
+        String embossing = embossingOverride == null || embossingOverride.isBlank() ? o.embossing()
+                : embossingOverride.trim().toUpperCase();
+        if (embossing.length() > 26 || !embossing.matches("[A-Z .\\-/]+")) {
+            throw new IssuanceException("INVALID_REQUEST", "Embossing name: max 26, letters/space/.-/ only");
+        }
+        String expiry = YearMonth.now().plusMonths(o.validity()).format(YYMM);
+
+        long cardId = jdbc.queryForObject("""
+                INSERT INTO card (pan_hash, pan_enc, pan_first6, pan_last4, psn, expiry_yymm, service_code, product_id,
+                                  customer_id, account_id, embossing_name, status, pvki, issue_channel, issue_location,
+                                  created_by, replaces_card_id, replacement_reason, atm_enabled, pos_enabled, ecom_enabled,
+                                  daily_wd_count_limit, daily_wd_amount_limit, per_txn_wd_limit, daily_pos_count_limit,
+                                  daily_pos_amount_limit, per_txn_pos_limit)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_PRINT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """, Long.class, panCrypto.hash(pan), panCrypto.encrypt(pan), pan.substring(0, 6),
+                pan.substring(pan.length() - 4), psn, expiry, o.serviceCode(), o.productId(), o.customerId(),
+                o.accountId(), embossing, o.pvki(), channel, location, operator, oldCardId, reason, o.atm(), o.pos(),
+                o.ecom(), o.wdCount(), o.wdAmount(), o.wdPer(), o.posCount(), o.posAmount(), o.posPer());
+
+        history(cardId, null, "PENDING_PRINT", reason.toLowerCase() + " of card " + oldCardId, operator);
+        audit(operator, "REPLACE_CARD", "card", cardId,
+                "{\"replaces\":" + oldCardId + ",\"reason\":\"" + reason + "\",\"samePan\":" + samePan + "}");
+        String productCode = jdbc.queryForObject("SELECT code FROM card_product WHERE id = ?", String.class, o.productId());
+        return new IssuedCard(cardId, pan, PanCrypto.mask(pan), expiry, productCode, "PENDING_PRINT");
+    }
+
+    /** When a replacement is activated, the card it replaces stops working. */
+    private void retirePredecessor(long cardId, String actor) {
+        Long prev = jdbc.query("SELECT replaces_card_id FROM card WHERE id = ?",
+                rs -> rs.next() ? (Long) rs.getObject(1) : null, cardId);
+        if (prev == null) return;
+        String status = jdbc.query("SELECT status FROM card WHERE id = ? FOR UPDATE",
+                rs -> rs.next() ? rs.getString(1) : null, prev);
+        if (status != null && LIVE_STATUSES.contains(status)) {
+            jdbc.update("UPDATE card SET status = 'CANCELLED', version = version + 1 WHERE id = ?", prev);
+            history(prev, status, "CANCELLED", "replaced by card " + cardId, actor);
+            audit(actor, "CARD_REPLACED", "card", prev, "{\"replacedBy\":" + cardId + "}");
+        }
     }
 
     // =========================================================================

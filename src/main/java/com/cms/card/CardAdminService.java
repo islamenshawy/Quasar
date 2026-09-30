@@ -29,7 +29,8 @@ public class CardAdminService {
                            String embossingName, int pinTries, int pinTryLimit, boolean pinSet,
                            String issueChannel, String issueLocation, int persoFetchCount,
                            OffsetDateTime lastPersoFetchAt, OffsetDateTime createdAt, String createdBy,
-                           OffsetDateTime printedAt, OffsetDateTime activatedAt, List<String> allowedTransitions) {}
+                           OffsetDateTime printedAt, OffsetDateTime activatedAt, List<String> allowedTransitions,
+                           String psn, Long replacesCardId, String replacementReason, Long replacedByCardId) {}
 
     public record StatusChange(String oldStatus, String newStatus, String reason, String changedBy,
                                OffsetDateTime changedAt) {}
@@ -47,7 +48,8 @@ public class CardAdminService {
                    p.card_tier, p.scheme, k.status, k.customer_id, c.external_ref, c.full_name, k.account_id,
                    a.account_number, k.embossing_name, k.pin_tries, p.pin_try_limit, k.pvv IS NOT NULL,
                    k.issue_channel, k.issue_location, k.perso_fetch_count, k.last_perso_fetch_at, k.created_at,
-                   k.created_by, k.printed_at, k.activated_at
+                   k.created_by, k.printed_at, k.activated_at, k.psn, k.replaces_card_id, k.replacement_reason,
+                   (SELECT max(n.id) FROM card n WHERE n.replaces_card_id = k.id AND n.status <> 'CANCELLED')
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN customer c     ON c.id = k.customer_id
@@ -121,7 +123,7 @@ public class CardAdminService {
         if (pan == null || !pan.matches("\\d{13,19}") || !Luhn.isValid(pan)) {
             throw new IssuanceException("INVALID_REQUEST", "Invalid PAN");
         }
-        Long id = jdbc.query("SELECT id FROM card WHERE pan_hash = ?",
+        Long id = jdbc.query("SELECT id FROM card WHERE pan_hash = ? ORDER BY id DESC LIMIT 1",
                 rs -> rs.next() ? rs.getLong(1) : null, panCrypto.hash(pan));
         if (id == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
         audit.record(operator, "CARD_LOOKUP_BY_PAN", "card", id);
@@ -250,6 +252,27 @@ public class CardAdminService {
         return m;
     }
 
+    public static final int MAX_PAN_REVEALS = 3;
+
+    /** Full PAN of a card waiting for print (to key into Dexxis). Audited as CARD_PAN_REVEAL; limited per card. */
+    @Transactional
+    public String revealPanForPrint(long cardId, String operator) {
+        record Row(String status, byte[] enc) {}
+        Row r = jdbc.query("SELECT status, pan_enc FROM card WHERE id = ? FOR UPDATE",
+                rs -> rs.next() ? new Row(rs.getString(1), rs.getBytes(2)) : null, cardId);
+        if (r == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
+        if (!"PENDING_PRINT".equals(r.status())) {
+            throw new IssuanceException("INVALID_STATUS", "The card number is only shown while the card waits for print");
+        }
+        Integer shown = jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE action = 'CARD_PAN_REVEAL' AND entity_type = 'card' AND entity_id = ?",
+                Integer.class, cardId);
+        if (shown >= MAX_PAN_REVEALS) {
+            throw new IssuanceException("LIMIT_REACHED", "Card number already shown " + shown + " times; cancel and reissue if it is lost");
+        }
+        audit.record(operator, "CARD_PAN_REVEAL", "card", cardId, Map.of("count", shown + 1));
+        return panCrypto.decrypt(r.enc());
+    }
+
     /** Clears wrong-PIN attempts on an active card (a PIN_BLOCKED card is reactivated with a status change). */
     @Transactional
     public CardView resetPinTries(long cardId, String reason, String operator) {
@@ -275,6 +298,7 @@ public class CardAdminService {
                 rs.getInt(19), rs.getBoolean(20), rs.getString(21), rs.getString(22), rs.getInt(23),
                 rs.getObject(24, OffsetDateTime.class), rs.getObject(25, OffsetDateTime.class), rs.getString(26),
                 rs.getObject(27, OffsetDateTime.class), rs.getObject(28, OffsetDateTime.class),
-                TRANSITIONS.getOrDefault(status, Set.of()).stream().sorted().toList());
+                TRANSITIONS.getOrDefault(status, Set.of()).stream().sorted().toList(), rs.getString(29),
+                (Long) rs.getObject(30), rs.getString(31), (Long) rs.getObject(32));
     }
 }
