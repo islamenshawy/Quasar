@@ -116,7 +116,8 @@ const form = reactive({
   // usage settings (flattened here, nested as "usage" in the API)
   atmEnabled: true, posEnabled: true, ecomEnabled: false, dailyPosCount: 20, dailyPosAmount: null, perTxnPosMax: null,
   wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7,
-  autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30
+  autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30,
+  emvScheme: 'EMV_CSK', emvDataList: '9F02,9F03,9F1A,95,5F2A,9A,9C,9F37,82,9F36,9F10:CVR'
 })
 const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee']
 
@@ -209,6 +210,17 @@ const sections = computed(() => [
     ]
   },
   {
+    title: 'Chip (EMV) cryptograms',
+    note: 'ARQC is verified by the HSM (KQ) when the product has an IMK-AC key (PIN and keys). The data list must match the card\'s CDOL1.',
+    fields: [
+      { name: 'emvScheme', label: 'Cryptogram version', type: 'select', required: true,
+        options: [{ label: 'EMV common session key (M/Chip, Visa CVN18)', value: 'EMV_CSK' }, { label: 'Visa CVN10 (card key)', value: 'VISA_CVN10' }] },
+      { name: 'emvDataList', label: 'Data list (tags in CDOL1 order)', required: true, col: 'col-12', mono: true,
+        hint: '9F10:CVR = bytes 4-7 of the issuer application data',
+        rules: [v => /^([0-9A-Fa-f]{2,6}(:CVR)?)(\s*,\s*[0-9A-Fa-f]{2,6}(:CVR)?)*$/.test(v || '') || 'Comma-separated tags'] }
+    ]
+  },
+  {
     title: 'Renewal and printing',
     note: 'Used by the CARD_RENEWAL and STALE_PENDING_PRINT batch jobs.',
     fields: [
@@ -240,7 +252,7 @@ function setProduct (p) {
   product.value = p
   const exp = currencies.value.find(c => c.code === p.currencyCode)?.exponent ?? 2
   const u = p.usage || {}
-  Object.assign(form, p, u, p.renewal || {}, {
+  Object.assign(form, p, u, p.renewal || {}, { emvScheme: p.emv?.scheme, emvDataList: p.emv?.dataList }, {
     description: p.description || '', chipProfile: p.chipProfile || '',
     dailyWdAmount: toMajor(p.dailyWdAmount, exp), perTxnWdMax: toMajor(p.perTxnWdMax, exp)
   })
@@ -257,6 +269,7 @@ async function save () {
     ...form,
     dailyWdAmount: toMinor(form.dailyWdAmount, exponent.value),
     perTxnWdMax: toMinor(form.perTxnWdMax, exponent.value),
+    emv: { scheme: form.emvScheme, dataList: form.emvDataList },
     renewal: { autoRenew: form.autoRenew, leadDays: form.leadDays, samePan: form.samePan, pendingPrintMaxDays: form.pendingPrintMaxDays },
     usage: {
       atmEnabled: form.atmEnabled, posEnabled: form.posEnabled, ecomEnabled: form.ecomEnabled,

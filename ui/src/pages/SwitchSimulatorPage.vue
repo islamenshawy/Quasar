@@ -61,6 +61,8 @@
                 </div>
               </div>
               <q-input v-if="f.channel !== 'ATM'" v-model="f.merchant" outlined dense maxlength="40" label="Merchant name / location" />
+              <q-toggle v-model="f.chip" label="Chip (EMV): send field 55 with an ARQC" :disable="f.channel === 'ECOM'" />
+              <q-toggle v-if="f.chip" v-model="f.tamper" label="Tamper with the ARQC (should decline 129)" color="negative" />
               <q-toggle v-model="f.advice" label="Send as stand-in advice (x220 / x120)" :disable="!['WITHDRAWAL','PURCHASE','PREAUTH'].includes(f.type)" />
             </q-card-section>
             <q-card-actions class="q-px-md q-pb-md">
@@ -80,6 +82,13 @@
                      :label="`${last.actionCode} ${last.actionText}`" />
             <q-space />
             <span class="text-caption muted">{{ last.elapsedMs }} ms</span>
+          </q-card-section>
+          <q-card-section v-if="last.chip" class="q-pt-none text-body2 row items-center q-gutter-sm">
+            <q-icon name="sim_card" />
+            <span>Chip ATC {{ last.chip.atc }}:</span>
+            <q-badge v-if="!last.chip.arpcReceived" color="grey-6" label="no ARPC returned" />
+            <q-badge v-else :color="last.chip.arpcValid ? 'positive' : 'negative'"
+                     :label="last.chip.arpcValid ? `ARPC valid · ARC ${last.chip.arc}` : 'ARPC invalid'" />
           </q-card-section>
           <q-card-section v-if="last.availableBalance != null" class="q-pt-none text-body2">
             Ledger <b class="mono">{{ money(last.ledgerBalance) }}</b> · Available <b class="mono">{{ money(last.availableBalance) }}</b>
@@ -134,7 +143,7 @@ import { label, toMinor, money as fmt } from '../lib/format.js'
 const $q = useQuasar()
 
 const typeOptions = ['BALANCE_INQUIRY', 'WITHDRAWAL', 'PURCHASE', 'PREAUTH', 'REFUND', 'PIN_CHANGE'].map(t => ({ label: label(t), value: t }))
-const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false })
+const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false })
 const cardOptions = ref([])
 const cardQuery = ref('')
 const status = ref({})
@@ -190,7 +199,8 @@ async function send () {
     type: f.type, channel: f.channel, cardId: f.card.id, currency: f.currency,
     amount: needsAmount.value ? toMinor(f.amount, exponent) : null,
     pin: f.pin || null, newPin: f.type === 'PIN_CHANGE' ? f.newPin : null,
-    terminalId: f.terminalId || null, merchant: f.merchant || null, advice: f.advice
+    terminalId: f.terminalId || null, merchant: f.merchant || null, advice: f.advice,
+    chip: f.chip && f.channel !== 'ECOM', tamperArqc: f.chip && f.tamper
   }
   const amt = needsAmount.value ? ` ${f.amount}` : ''
   await post(body, `${label(f.type)}${amt} · ${f.channel} · ${f.card.maskedPan}`, f.type)
