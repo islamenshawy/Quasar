@@ -83,7 +83,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { Notify } from 'quasar'
+import { Notify, useQuasar } from 'quasar'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import StatusAction from '../components/StatusAction.vue'
@@ -91,9 +91,10 @@ import CardPreview from '../components/CardPreview.vue'
 import AuditTrail from '../components/AuditTrail.vue'
 import CardLimitsCard from '../components/CardLimitsCard.vue'
 import TxnTable from '../components/TxnTable.vue'
-import { Dialog } from 'quasar'
 import { api } from '../lib/api.js'
 import { dateTime, expiry, label, statusColor } from '../lib/format.js'
+
+const $q = useQuasar()
 
 const props = defineProps({ id: { type: String, required: true } })
 
@@ -116,7 +117,7 @@ async function changeStatus (status, reason) {
 }
 
 function resetTries () {
-  Dialog.create({
+  $q.dialog({
     title: 'Reset PIN tries',
     message: `Clear ${k.value.pinTries} wrong PIN attempt(s) on this card?`,
     prompt: { model: '', type: 'text', label: 'Reason', isValid: v => !!(v && v.trim()), outlined: true },

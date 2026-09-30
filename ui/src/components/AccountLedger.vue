@@ -36,10 +36,12 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Dialog, Notify } from 'quasar'
+import { Notify, useQuasar } from 'quasar'
 import TxnTable from './TxnTable.vue'
 import { api, qs } from '../lib/api.js'
 import { dateTime, label, money } from '../lib/format.js'
+
+const $q = useQuasar()
 
 const props = defineProps({ account: { type: Object, required: true } })
 const emit = defineEmits(['changed'])
@@ -86,7 +88,7 @@ async function loadHolds () {
 }
 
 function release (h) {
-  Dialog.create({
+  $q.dialog({
     title: 'Release hold',
     message: `Give ${money(h.amount, exp())} back to the available balance?`,
     prompt: { model: '', type: 'text', label: 'Reason', isValid: v => !!(v && v.trim()), outlined: true },

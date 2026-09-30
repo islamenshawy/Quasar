@@ -16,6 +16,7 @@ const routes = [
       { path: 'cards', name: 'cards', component: () => import('./pages/CardsPage.vue'), meta: { title: 'Cards' } },
       { path: 'cards/:id', name: 'card', component: () => import('./pages/CardDetailPage.vue'), props: true, meta: { title: 'Card' } },
       { path: 'transactions', name: 'transactions', component: () => import('./pages/TransactionsPage.vue'), meta: { title: 'Transactions' } },
+      { path: 'switch-simulator', name: 'switch-sim', component: () => import('./pages/SwitchSimulatorPage.vue'), meta: { title: 'Switch simulator' } },
       { path: 'gl', name: 'gl', component: () => import('./pages/GlPage.vue'), meta: { title: 'GL accounts' } },
       { path: 'audit', name: 'audit', component: () => import('./pages/AuditPage.vue'), meta: { title: 'Audit log' } },
       { path: 'setup/currencies', name: 'currencies', component: () => import('./pages/setup/CurrenciesPage.vue'), meta: { title: 'Currencies' } },
