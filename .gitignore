@@ -9,3 +9,7 @@ target/
 *.env
 application-local.yml
 /config/
+
+# admin console build
+ui/node_modules/
+ui/dist/

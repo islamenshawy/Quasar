@@ -58,19 +58,49 @@ java hsm-sim/HsmSimulator.java pinblock <PAN> 1234 0B0B0B0B0B0B0B0B1616161616161
 | T14 | Cancel a pending card | `CANCELLED` |
 | T15 | Activate the cancelled card | `INVALID_STATUS` |
 
-## 4. Manual UI cases (`/issuance.html`)
+## 3a. Authorization catalogue (`scripts/auth-test.sh`)
+
+Needs the **dev** profile (it calls `POST /api/dev/authorize`), hsm-sim and the seed. It creates its own customer, prepaid account and card (PIN 1234), funds 1000.00 and runs:
+
+| ID | Case | Expected |
+|---|---|---|
+| A02-A04 | Balance inquiry: correct PIN / no PIN / wrong PIN | 000 with balances / 112 / 117 |
+| A05-A06 | Withdraw 200.00, then resend the identical message | 000; the resend returns the same transaction id |
+| A07-A09 | Over per-withdrawal limit / over available / USD on an EGP account | 121 / 116 / 119 |
+| A10-A13 | Full reversal, repeated reversal, partial reversal (100.00 dispensed), unmatched reversal | 400 each; balance restored only where due |
+| A14-A16 | PIN change; old PIN rejected; new PIN accepted | 000 / 117 / 000 |
+| A17-A22 | POS purchase, cash at POS, pre-auth + completion, refund, e-commerce on a product without e-commerce | 000 / 902 / hold then capture / credit / 119 |
+| A23-A24 | Card-level per-withdrawal override; card e-commerce on while product is off | 121 / 119 |
+| A25-A26b | Blocked card; stand-in advice on it; advice in another currency | 104 / 000 posted / 000 not posted |
+| A27-A28 | Third wrong PIN | 106 and card PIN_BLOCKED |
+| A29-A30 | Statement closes at the ledger balance; transactions recorded | pass |
+
+Ledger integrity after any run (all must return 0):
+
+```sql
+SELECT count(*) FROM (SELECT journal_id FROM posting GROUP BY journal_id HAVING sum(amount) <> 0) x;       -- unbalanced journals
+SELECT count(*) FROM account a WHERE ledger_balance <> COALESCE((SELECT sum(amount) FROM posting p WHERE p.account_id = a.id), 0);
+SELECT count(*) FROM account a WHERE held_amount <> COALESCE((SELECT sum(amount) FROM hold h WHERE h.account_id = a.id AND status = 'OPEN'), 0);
+```
+
+## 4. Manual UI cases (CMS Console, `/`)
 
 | ID | Steps | Expected |
 |---|---|---|
-| UI-01 | Search by part of a name, CIF, national ID, mobile | Matching customers listed, max 50 |
-| UI-02 | New customer, leave "Name on card" untouched, type full name | Name on card fills in uppercase, max 26 |
-| UI-03 | New customer with invalid name on card (digits) | Clear error, nothing created |
-| UI-04 | Select a customer | Step 2 unlocks; summary panel updates |
-| UI-05 | Open an account type with no eligible product | Step 3 explains that no product is set up |
-| UI-06 | Change product | Card preview changes tier colour and scheme |
-| UI-07 | Issue card | Full PAN shown once with copy button; card list shows masked PAN |
-| UI-08 | Press "Hide number" | Full PAN removed from the page |
-| UI-09 | Keyboard only | All steps reachable with Tab/Enter, focus visible |
+| UI-01 | First visit | Operator id prompt; the id is shown in the header and recorded on every change |
+| UI-02 | Issue card → New customer, type the full name only | Name on card fills in uppercase, max 26, and stops following once edited |
+| UI-03 | New customer with an invalid name on card (digits) | Clear error, nothing created |
+| UI-04 | Setup → Numbering: CIF source = CMS_GENERATED, then create a customer | CIF field hidden; CIF assigned from the CIF sequence |
+| UI-05 | Setup → Account types: CURRENT = Core banking, EGP + USD, max 1. Open CURRENT in AED, then two in EGP | AED not offered; account number required; the second CURRENT is refused with the limit |
+| UI-06 | Issue a card on an account type with no eligible product | The product list says no product is set up for that combination |
+| UI-07 | Issue card | Full PAN shown once with a copy button; Hide number leaves only the masked PAN |
+| UI-08 | Card page of a pending card → Change status | Only Cancel card is offered |
+| UI-09 | Suspend a customer without a reason | Blocked with Reason is required; with a reason the badge turns Suspended |
+| UI-10 | Close an account that has a live card | Refused: cancel the live card first |
+| UI-11 | Cards → Find by full card number, unknown PAN | Card not found; the PAN never appears in the URL |
+| UI-12 | Setup → Card products → P01: change eligibility, save | The Issue card product list follows the new matrix |
+| UI-13 | Audit log, filter by action | Entries show actor, record link and details; no PAN anywhere |
+| UI-14 | Phone width (390 px) and dark mode | No horizontal scroll; the stepper is vertical; text stays readable |
 
 ## 5. Fault-injection cases (hsm-sim)
 

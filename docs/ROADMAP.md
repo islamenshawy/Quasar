@@ -46,18 +46,31 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-036 | Run smoke test on DEV and TEST; record in TESTING.md | Next |
 | CMS-037 | GitHub repository, CI pipeline, PR template, branch protection | In progress |
 
+## Admin console (next minor release)
+
+| ID | Item | Status |
+|---|---|---|
+| CMS-070 | CMS Console (Vue 3 + Quasar) built into the jar; replaces `/issuance.html` | Done (branch `feature/CMS-070-admin-console`) |
+| CMS-071 | Reference data screens: currencies, segments, account types, card products, eligibility matrix | Done |
+| CMS-072 | CIF / account numbering: sequences, CIF source setting, per-type number source, allowed currencies, max per customer | Done |
+| CMS-073 | Customer and account maintenance: search, edit, status changes with reason | Done |
+| CMS-074 | Card maintenance: search, PAN lookup, history, block / unblock / lost / stolen / cancel | Done |
+| CMS-075 | Audit log viewer and dashboard | Done |
+| CMS-076 | Smoke test cases for the console API (numbering, status rules) | Next |
+
 ## 0.5.0 — Authorization engine and ledger
 
 | ID | Item | Status |
 |---|---|---|
-| CMS-040 | Internal auth request/response model (independent of BASE24) | Planned |
-| CMS-041 | Card checks: status, expiry, service code, PIN tries, PIN_BLOCKED after limit | Planned |
-| CMS-042 | Balance inquiry | Planned |
-| CMS-046 | Withdrawal: limits, velocity, available balance, hold, posting against ATM cash GL | Planned |
-| CMS-047 | PIN change (verify old, new PVV, atomic update) | Planned |
-| CMS-048 | Reversals: full and partial, idempotent, duplicate detection | Planned |
-| CMS-049 | Account top-up / funding (admin), with double-entry postings | Planned |
-| CMS-050 | Admin: block/unblock card, reset PIN tries, transaction view | Planned |
+| CMS-040 | Internal auth request/response model (independent of BASE24) | Done |
+| CMS-041 | Card checks: status, expiry, service code, PIN tries, PIN_BLOCKED after limit | Done |
+| CMS-042 | Balance inquiry | Done |
+| CMS-046 | Withdrawal, purchase, pre-auth/completion, refund: limits, velocity, funds, holds, postings | Done |
+| CMS-047 | PIN change (verify old, new PVV, atomic update) | Done |
+| CMS-048 | Reversals: full and partial, idempotent, duplicate detection; stand-in advices | Done |
+| CMS-049 | Account top-up / funding and adjustments (admin), with double-entry postings | Done |
+| CMS-050 | Admin: card controls and limit overrides, reset PIN tries, transactions, statements, holds, GL | Done |
+| CMS-066 | Funds check for CORE_BANKING accounts (core banking interface) | Planned (declines 907 until then) |
 | CMS-043 | Key-block LMK support in HSM client | Blocked (IN-05) |
 | CMS-044 | Kiosk PIN key handling (TPK vs ZPK) | Blocked (IN-06) |
 | CMS-045 | Load real product catalogue and eligibility | Blocked (IN-07) |

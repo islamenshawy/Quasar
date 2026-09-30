@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| Applies to | cms-core **0.4.0**, hsm-sim **1.0.0** |
+| Applies to | cms-core **0.4.0** with the CMS Console (CMS-070 to CMS-075), hsm-sim **1.0.0** |
 | Environments covered | DEV (developer laptop), TEST (shared test server) |
 | Owner | Development chapter, tech lead |
-| Last updated | 2026-09-28 |
+| Last updated | 2026-09-30 |
 
 > UAT and production are out of scope. They need operator authentication, a real payShield, a KMS for PAN keys, and PCI controls first (see [ROADMAP](ROADMAP.md)).
 
@@ -20,7 +20,10 @@
 | Database | Local PostgreSQL | PostgreSQL on the server |
 | How it runs | `mvn spring-boot:run` or `java -jar` | `systemd` services |
 | Spring profile | `dev` | `test` (you create `application-test.yml`, see §9.3) |
+| CMS Console | `http://localhost:8080/` (or `:9000` with `npm run dev`, §6.3) | `http://<server>:8080/` from the test subnet only |
 | Data | Test data only | Test data only. **Never real cards, PANs or keys.** |
+
+The CMS Console is part of the cms-core jar. There is no separate web server or front-end deployment.
 
 ---
 
@@ -33,6 +36,8 @@
 | Maven | 3.9+ (3.8 works) | Builds the CMS |
 | PostgreSQL | **15 or 16** | CMS database |
 | curl, jq | any | Smoke test script |
+| Internet access on the build machine | first build only | Maven downloads Node and the console's npm packages (§6.1) |
+| Optional: Node.js | 20+ (24 used in development) | Only for console hot reload (`npm run dev`). Maven builds do **not** need it installed. |
 | Optional: DBeaver or pgAdmin | any | Browse the database |
 | Optional: Postman | any | Manual API testing |
 
@@ -81,7 +86,8 @@ cms/
 ├── docs/                        DEPLOYMENT, TESTING, DECISIONS, ROADMAP
 ├── hsm-sim/HsmSimulator.java    payShield simulator (single file, no build)
 ├── scripts/                     seed-dev.sql, smoke-test.sh
-└── src/main/...                 CMS source, config, Flyway migrations, issuance screen
+├── ui/                          CMS Console (Vue 3 + Quasar); built into the jar by Maven
+└── src/main/...                 CMS source, config, Flyway migrations
 ```
 
 ---
@@ -117,7 +123,7 @@ The CMS reads configuration from `application.yml`, from the active profile file
 |---|---|---|---|
 | `SPRING_PROFILES_ACTIVE` | yes | `dev` | Selects `application-dev.yml` |
 | `CMS_DB_PASSWORD` | yes | your DB password | |
-| `SPRING_DATASOURCE_URL` | no | default `jdbc:postgresql://localhost:5432/cms` | Override for another host |
+| `SPRING_DATASOURCE_URL` | no | default `jdbc:postgresql://localhost:5432/cms` | Override for another host **or port**, e.g. `jdbc:postgresql://localhost:1455/cms` if PostgreSQL was installed on a non-default port |
 | `CMS_PAN_ENC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_PAN_HMAC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_HSM_HOST` / `CMS_HSM_PORT` | no | `localhost` / `1500` | Point at the real payShield later |
@@ -164,15 +170,50 @@ Useful options:
 
 ## 6. Build and run the CMS
 
+### 6.1 Build
+
 ```bash
-mvn clean verify        # compile + unit tests + build jar with version info
-java -jar target/cms-core-0.4.0.jar
-# or during development: mvn spring-boot:run
+mvn clean verify        # console build + compile + unit tests + jar with version info
 ```
 
-On first start, Flyway creates the schema (migrations V1 to V3). The log shows `Successfully applied 3 migrations`, then `Started CmsApplication`.
+One build produces one jar that contains the backend **and** the CMS Console:
+
+1. `frontend-maven-plugin` installs its own Node (version in `pom.xml`, `node.version`) into `target/node`. Your installed Node, if any, is not used.
+2. `npm install` in `ui/` (exact versions from `ui/package-lock.json`), then `npm run build` into `ui/dist/`.
+3. `ui/dist/` is copied into the jar as static content served at `/`.
+
+| Option | Use |
+|---|---|
+| `-DskipUi` | Backend only; faster when you only changed Java. The jar then has **no console** (blank page at `/`). |
+| `"-Dnpm.install=ci --no-audit --no-fund"` | Strict clean install, as used in CI. Avoid it inside OneDrive (see below). |
+
+> **OneDrive / synced folders:** sync can lock files in `ui/node_modules` and make npm fail with `EPERM`, `ENOTEMPTY` or `unlink` errors. Delete `ui/node_modules` (PowerShell: `Remove-Item ui\node_modules -Recurse -Force`) and build again, or keep the working copy outside the synced folder.
+
+### 6.2 Run
+
+```bash
+java -jar target/cms-core-0.4.0.jar
+# or during development: mvn spring-boot:run  (add -DskipUi for faster restarts)
+```
+
+On first start, Flyway creates the schema (migrations V1 to V5). The log shows `Successfully applied 5 migrations`, then `Started CmsApplication`. An existing database gets only the migrations it is missing, e.g. a 0.4.0 database gets V4 and V5 (`Migrating schema "public" to version "4 - configurable reference data"`); see §9.7 before upgrading a shared database.
 
 The CMS starts even if the HSM is down, because HSM connections are opened on first use. Check the HSM state with the health endpoint (§8).
+
+Open the console at `http://localhost:8080/`. On first visit it asks for an **operator id**, which is stored in the browser and sent with every change (`X-Operator`). This is test-mode identification only; real sign-in comes with CMS-060. The old `http://localhost:8080/issuance.html` redirects to **Issue card**.
+
+### 6.3 Console development (hot reload)
+
+Only needed when changing the console itself. Requires Node 20+.
+
+```bash
+cd ui
+npm install
+npm run dev                                   # http://localhost:9000, API proxied to localhost:8080
+CMS_API=http://localhost:8081 npm run dev     # proxy to a CMS on another port
+```
+
+PowerShell: `$env:CMS_API="http://localhost:8081"; npm run dev`.
 
 ---
 
@@ -188,6 +229,23 @@ It loads:
 - **Test keys** for hsm-sim: ZMK and ZPK for the corehost, ZPK for the kiosk, PVK and CVK. The clear values are printed as comments in the file.
 - **Two products:** `P01` Prepaid Classic (PREPAID/PAYROLL accounts × MASS/PAYROLL/STAFF segments) and `P02` Debit Gold (CURRENT/SAVINGS accounts × PREMIUM/STAFF segments).
 
+After seeding, products and eligibility are maintained in the console (§7.1). Only the **HSM keys** still need SQL, because the console never handles key material.
+
+### 7.1 First-time configuration in the CMS Console
+
+Migrations seed a starting set of currencies (EGP, USD, AED), segments and account types. Review them under **Setup**, in this order, since each step uses the previous one:
+
+| # | Screen | What to decide |
+|---|---|---|
+| 1 | Setup → Currencies | Currencies in use. Decimal places lock once an account exists in that currency. |
+| 2 | Setup → Customer segments | Segments (e.g. MASS, PREMIUM, STAFF). Inactive segments stay on existing customers. |
+| 3 | Setup → Numbering & settings | **CIF source:** CMS_GENERATED, CORE_BANKING or EITHER (default EITHER). **Number sequences:** prefix, digits, next value, optional Luhn digit. Add one sequence per account-number format you need, e.g. `ACCOUNT_PREPAID`. |
+| 4 | Setup → Account types | Per type: account number **generated by the CMS** (choose the sequence) or **entered from core banking**; currencies offered; max open accounts per customer; where the balance is held. |
+| 5 | Setup → Card products | BIN, PAN length and range start (fixed after creation), range end, validity, service code, PVK/CVK (from `hsm_key`), PVKI, PIN tries, ATM limits. |
+| 6 | Card product → Eligibility | Tick which account type × segment combinations may receive the product. The account's currency must also match the product's. |
+
+Every change is recorded in **Audit log** with the operator id. Existing customers, accounts and cards are never changed by setup edits; the new rules apply to new records.
+
 ---
 
 ## 8. Verify the deployment
@@ -198,10 +256,12 @@ Run these checks in order. Each must pass before moving to the next.
 |---|---|---|---|
 | 1 | Version | `curl localhost:8080/api/version` | `"version":"0.4.0"` |
 | 2 | HSM | `curl localhost:8080/api/admin/hsm/health` | `"status":"UP"`, `lmkCheckValue` = `EB7A8DF91182DBE2` (sim default) |
-| 3 | Screen | Open `http://localhost:8080/issuance.html` | Segments and account types load in the dropdowns |
+| 3 | Console | Open `http://localhost:8080/` | Dashboard loads and the header shows **HSM UP**; Setup → Account types lists the seeded types |
 | 4 | Smoke test | `./scripts/smoke-test.sh` | `15 passed, 0 failed` |
+| 5 | Authorization (DEV only) | `./scripts/auth-test.sh` | `32 passed, 0 failed` |
+| 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
-If all four pass, the deployment is good. Record the result in [TESTING.md](TESTING.md) §6.
+If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
 
 ---
 
@@ -307,13 +367,15 @@ Then run the checks in §8 against the server.
 
 | Port | Service | Open to |
 |---|---|---|
-| 8080 | CMS (screen, admin API, Dexxis API) | Test users' subnet and the Dexxis server **only** |
+| 8080 | CMS (Console, admin API, Dexxis API) | Test users' subnet and the Dexxis server **only** |
 | 1500 | hsm-sim | localhost only (do not expose) |
 | 5432 | PostgreSQL | localhost only |
 
 ```bash
 sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 ```
+
+> **The console has no login yet.** Anyone who can reach port 8080 can change setup, block cards and issue cards (which shows a full PAN). The operator id is self-declared. Keep 8080 restricted to named test users until operator authentication (CMS-060) is in place.
 
 ### 9.7 Upgrade procedure (every new version)
 
@@ -324,6 +386,15 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 4. Restart: `sudo systemctl restart cms`. Flyway applies any new migrations.
 5. Verify with §8: the version must show the new number, and the smoke test must pass.
 6. Record the deployment in [TESTING.md](TESTING.md) §6.
+
+**Upgrading to the CMS Console release (migration V4):**
+
+- V4 is additive and keeps current behaviour: every account type stays CMS-generated from the `ACCOUNT` sequence (continuing after the last `account_number_seq` value), allows every existing currency, and the CIF source is `EITHER`.
+- Back up first (step 2). V4 cannot be undone except by restoring that backup.
+- Never start a feature-branch build against a shared database. Once a migration has run, its file can no longer change (Flyway checksum), so a branch build can block the next release.
+- After the restart, check Setup → Numbering & settings (the `ACCOUNT` next number is above the highest existing account number) and Setup → Account types before operators start working.
+- **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
+- Admin API changes for any script that calls it: `GET /api/admin/customers` returns a page `{items, total, page, size}`, and `/api/admin/reference` returns full objects (see CHANGELOG, **Breaking**).
 
 ### 9.8 Rollback
 
@@ -357,6 +428,13 @@ The simulator uses the **same clear test keys** you will load into the payShield
 | `HSM header mismatch` | Header length differs between CMS and HSM | Align `header-length` with the HSM setting |
 | `HSM_ERROR ... / 15` | Input data error, wrong field layout or key token | Check the key rows in `hsm_key`; on a real HSM, check the command layout |
 | `KEY_MISSING` | Seed not loaded or key name differs | Run `seed-dev.sql`; check product key names |
-| `PRODUCT_NOT_ELIGIBLE` | No eligibility row for that account type × segment | Add a row to `product_eligibility` |
-| Existing cards fail with `PAN decryption failed` | PAN keys changed | Restore the original `CMS_PAN_ENC_KEY` |
-| Screen dropdowns empty | CMS not reachable, or reference tables empty | Check `/api/admin/reference`; migrations must have run |
+| `PRODUCT_NOT_ELIGIBLE` / "No product is allowed" in Issue card | No eligibility for that account type × segment, or the currency differs | Setup → Card products → product → Eligibility; check the product and account currency |
+| Existing cards fail with `PAN decryption failed`, or known PANs return `Card not found` | PAN keys differ from those used when the cards were issued | Start the CMS with the original `CMS_PAN_ENC_KEY` / `CMS_PAN_HMAC_KEY` |
+| Console dropdowns empty | CMS not reachable, or reference data inactive/empty | Check `/api/admin/reference`; migrations must have run; activate the rows under Setup |
+| Blank page at `http://localhost:8080/` | Jar built with `-DskipUi`, or `ui/dist` missing | Rebuild without `-DskipUi` |
+| Console shows "Cannot reach the CMS server" | CMS stopped, or `npm run dev` proxying to the wrong port | Start the CMS; set `CMS_API` for the dev server (§6.3) |
+| `Could not extract the Node archive ... Unexpected end of ZLIB input stream` | Node download was cut off | Delete `~/.m2/repository/com/github/eirslett/node/<version>` and build again |
+| npm `EPERM`, `ENOTEMPTY` or `unlink` during the build | OneDrive or antivirus locking `ui/node_modules` | Delete `ui/node_modules` and build again, or move the working copy out of OneDrive |
+| "Account type X needs the core banking account number" | The type is set to core-banking numbering | Type the core banking number, or change the type under Setup → Account types |
+| "CIF is generated by the CMS; leave it blank" | CIF source is CMS_GENERATED | Leave CIF empty, or change Setup → Numbering & settings → CIF source |
+| Setup change not visible in a form | The browser has the old reference data | Reload the page |

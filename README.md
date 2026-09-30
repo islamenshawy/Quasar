@@ -6,13 +6,13 @@ Issuer-side card management: operator-driven card issuance, perso data for Dexxi
 |---|---|
 | Version | **0.4.0** (see [CHANGELOG](CHANGELOG.md)) |
 | HSM simulator | hsm-sim **1.0.0** |
-| Stack | Java 21, Spring Boot 3, jPOS, PostgreSQL, Flyway |
+| Stack | Java 21, Spring Boot 3, jPOS, PostgreSQL, Flyway · console: Vue 3 + Quasar (`ui/`) |
 | Environments | DEV and TEST only. **Test data only.** |
 
 ## Architecture
 
 ```
-Operator ──> CMS issuance screen          Create customer → open account → issue card (PENDING_PRINT)
+Operator ──> CMS Console (/)              Setup, customers, accounts, cards, audit; issue card (PENDING_PRINT)
 Kiosk (NCR KGS) ──> Dexxis ──> CMS         Search card by PAN (perso data) / Activate + PIN / Cancel
 ATM ──> Corehost ──BASE24──> CMS           Balance inquiry / Withdrawal / PIN change / Reversal   (0.6.0)
                               │
@@ -47,4 +47,4 @@ psql -h localhost -U cms -d cms -f scripts/seed-dev.sql
 ./scripts/smoke-test.sh
 ```
 
-Then open `http://localhost:8080/issuance.html`.
+Then open the CMS Console at `http://localhost:8080/`. For console development with hot reload: `cd ui && npm install && npm run dev` (port 9000, API proxied to 8080).
