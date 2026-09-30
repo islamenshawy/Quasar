@@ -58,6 +58,17 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-075 | Audit log viewer and dashboard | Done |
 | CMS-076 | Smoke test cases for the console API (numbering, status rules) | Next |
 
+## Card lifecycle (next minor release)
+
+| ID | Item | Status |
+|---|---|---|
+| CMS-080 | Card replacement (same / new number, reasons, predecessor retired on activation) | Done |
+| CMS-081 | Automatic renewal before expiry | Done |
+| CMS-082 | Batch scheduler with run history and single-run lock | Done |
+| CMS-083 | Jobs: card expiry, hold expiry, uncollected prints, usage cleanup | Done |
+| CMS-084 | Renewal and replacement fees posted to the account | Planned |
+| CMS-085 | Batch output files for bulk (bureau) embossing | Planned |
+
 ## 0.5.0 — Authorization engine and ledger
 
 | ID | Item | Status |

@@ -114,6 +114,22 @@ Dev profile (dev users). Every test script signs in: operator for changes, super
 | S27-S29 | Dexxis without key / with key; operator on Dexxis API | 401, reaches service (404), 403 |
 | S30 | Supervisor changes approval policy | 403 (admin only) |
 
+## 3d. Card lifecycle catalogue (`scripts/lifecycle-test.sh`)
+
+Dev profile (uses the dev time helpers to age cards and holds).
+
+| ID | Case | Expected |
+|---|---|---|
+| L01-L04 | Damaged card replaced with the same number; PSN 01; second replacement; Dexxis search | PENDING_PRINT, points to old card; DUPLICATE; Dexxis gets PSN 01 |
+| L05-L08 | Old card before / after the replacement is activated (new PIN) | works; old CANCELLED; the number authorizes on the new card |
+| L09-L12 | Lost card: keep number refused; new number; old card | INVALID_REQUEST; new PAN; old LOST, declines 208 |
+| L13-L14 | Show number for printing 3 times, then again | PAN shown; 4th refused (LIMIT_REACHED) |
+| L15-L17 | Operator runs a job; card past expiry after CARD_EXPIRY | 403; EXPIRED |
+| L18-L21 | Card expiring within 30 days; CARD_RENEWAL twice | renewal waiting for print, same number, PSN 01; no duplicate |
+| L22-L23 | Card pending print for 40 days; STALE_PENDING_PRINT | CANCELLED |
+| L24-L26 | Pre-auth hold expired; HOLD_EXPIRY | funds available again |
+| L27 | Job list | last runs recorded |
+
 ## 4. Manual UI cases (CMS Console, `/`)
 
 | ID | Steps | Expected |

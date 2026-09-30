@@ -271,6 +271,8 @@ Run these checks in order. Each must pass before moving to the next.
 | 4 | Smoke test | `./scripts/smoke-test.sh` | `15 passed, 0 failed` |
 | 5 | Authorization (DEV only) | `./scripts/auth-test.sh` | `32 passed, 0 failed` |
 | 5b | BASE24 interface (DEV only) | `./scripts/iso-test.sh` | `18 passed, 0 failed` |
+| 5c | Security (DEV only) | `./scripts/security-test.sh` | `30 passed, 0 failed` |
+| 5d | Card lifecycle (DEV only) | `./scripts/lifecycle-test.sh` | `27 passed, 0 failed` |
 | 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
 If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
@@ -408,6 +410,7 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 - After the restart, check Setup → Numbering & settings (the `ACCOUNT` next number is above the highest existing account number) and Setup → Account types before operators start working.
 - **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
 - **V6 (users, roles, maker-checker):** on the first start after upgrading, the CMS creates `admin` (see §6.2). Give Dexxis the API key (`CMS_DEXXIS_API_KEY`) **before** upgrading, or perso and activation calls fail with 401. Update any script that called the admin API to sign in (HTTP Basic) and to handle 202 approval responses.
+- **V7 (card lifecycle, batch):** the batch scheduler starts with the CMS. Review **Control → Batch jobs** after the upgrade: CARD_RENEWAL will create renewal cards for every live card expiring within its product's lead days (default 30) at 01:00, and STALE_PENDING_PRINT cancels cards not printed within 30 days. Switch a job off, or change the product settings, before the first night if that is not wanted. To stop all scheduled runs on an instance set `cms.batch.scheduler-enabled=false`.
 - Admin API changes for any script that calls it: `GET /api/admin/customers` returns a page `{items, total, page, size}`, and `/api/admin/reference` returns full objects (see CHANGELOG, **Breaking**).
 
 ### 9.8 Rollback

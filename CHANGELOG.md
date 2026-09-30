@@ -7,6 +7,22 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 ## [Unreleased]
 
 ### Added
+- **Card replacement**: reasons RENEWAL, DAMAGED, LOST, STOLEN, NOT_RECEIVED, OTHER; same card number with the next PSN and a new expiry, or a new number (always for lost / stolen / not received, which also blocks the old card at once). The old card works until the replacement is activated at the kiosk, then it is cancelled. Channel switches and limit overrides carry over. Maker-checker action CARD_REPLACE (direct by default). (CMS-080)
+- **Renewal**: product settings auto-renew, lead days, same number; the CARD_RENEWAL job creates renewals that wait for print. (CMS-081)
+- **Batch scheduler**: jobs with cron schedules and run history, one run at a time (also across instances), run now by a supervisor, schedule changes through maker-checker (BATCH_JOB_UPDATE). Jobs: CARD_EXPIRY, CARD_RENEWAL, HOLD_EXPIRY, STALE_PENDING_PRINT (product limit, default 30 days), USAGE_CLEANUP. (CMS-082, CMS-083)
+- "Show number for printing": the full PAN of a card waiting for print, audited (CARD_PAN_REVEAL), at most 3 times per card, for replacements and renewals keyed into Dexxis.
+- Console: Replace card, replacement links and PSN on the card page, Batch jobs page, product renewal settings.
+- `scripts/lifecycle-test.sh`: 27 cases; dev-only time helpers `/api/dev/cards/{id}/age` and `/api/dev/accounts/{id}/expire-holds`.
+
+### Fixed
+- Dexxis perso data returned PSN `00` for every card; it now returns the card's PSN.
+
+### Changed
+- A PAN may belong to several cards (different PSN). Dexxis search / activate / cancel use the card waiting for print; authorization uses the card whose expiry matches the terminal data, otherwise the active one.
+
+### Migrations
+- `V7__card_lifecycle_and_batch.sql`: replacement columns on `card`, unique (pan_hash, psn) instead of unique pan_hash, product renewal settings, `batch_job` (seeded) and `batch_run`, approval actions CARD_REPLACE and BATCH_JOB_UPDATE.
+
 - **Operator sign-in and roles** (Spring Security): users with BCrypt passwords, roles ADMIN / SUPERVISOR / OPERATOR / VIEWER, lock after 5 failed sign-ins, temporary passwords that must be changed at first sign-in, password policy (10+ characters, upper, lower, digit, symbol). Console uses a session cookie with CSRF protection; scripts may use HTTP Basic. The operator on every audit row is now the signed-in user. (CMS-060)
 - First start creates `admin` (from `CMS_ADMIN_PASSWORD`, or a generated password written to the log once). The dev profile also creates admin, supervisor, supervisor2, operator and viewer. (CMS-060)
 - **Maker-checker**: per-action approval policy (setup changes, ledger entries, hold releases and card limits need approval by default; status changes and PIN-try resets are direct but can be switched on). Requests are validated at submission, approved or rejected by a different SUPERVISOR/ADMIN, and executed as the maker. Console: Approvals page with a pending badge, Approval policy page. (CMS-060)
