@@ -127,6 +127,9 @@ The CMS reads configuration from `application.yml`, from the active profile file
 | `CMS_PAN_ENC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_PAN_HMAC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_HSM_HOST` / `CMS_HSM_PORT` | no | `localhost` / `1500` | Point at the real payShield later |
+| `CMS_ADMIN_PASSWORD` | first start | dev profile has its own users | Password of the bootstrap `admin` (must be changed at first sign-in). Empty = generated and written to the log once |
+| `CMS_DEXXIS_API_KEY` | TEST: yes | `dev-dexxis-key` | Key Dexxis sends in `X-Api-Key`. Empty = Dexxis calls refused. Long random value, e.g. `openssl rand -hex 32` |
+| `CMS_DEV_PASSWORD` | no | `Dev-Passw0rd!` | DEV only: password of the dev users admin, supervisor, supervisor2, operator, viewer |
 | `CMS_ISO_PORT` / `CMS_ISO_ENABLED` | no | `7000` / `true` | BASE24 switch interface. Also `cms.iso.length-prefix` (BINARY2 / ASCII4) and `cms.iso.header-length`; set them from the BASE24 spec |
 
 > **Important:** the PAN keys encrypt card numbers at rest. If you change them, existing cards can no longer be decrypted. On TEST, generate them once (`openssl rand -base64 32`), store them in the env file (§9.2), and never rotate them casually.
@@ -201,7 +204,14 @@ On first start, Flyway creates the schema (migrations V1 to V5). The log shows `
 
 The CMS starts even if the HSM is down, because HSM connections are opened on first use. Check the HSM state with the health endpoint (§8).
 
-Open the console at `http://localhost:8080/`. On first visit it asks for an **operator id**, which is stored in the browser and sent with every change (`X-Operator`). This is test-mode identification only; real sign-in comes with CMS-060. The old `http://localhost:8080/issuance.html` redirects to **Issue card**.
+Open the console at `http://localhost:8080/` and **sign in**:
+
+- **DEV profile:** users `admin`, `supervisor`, `supervisor2`, `operator`, `viewer`, password `Dev-Passw0rd!` (or `CMS_DEV_PASSWORD`).
+- **Other profiles:** the first start creates `admin` with `CMS_ADMIN_PASSWORD`, or with a generated password printed once in the log (`No users found. Created 'admin'...`). Sign in, change it, then create named users under **Control → Users**. Do not share accounts: every change and approval is recorded under the user.
+
+Roles: **ADMIN** (users, approval policy), **SUPERVISOR** (setup changes, approvals), **OPERATOR** (customers, accounts, cards, entries), **VIEWER** (read only). Changes covered by the approval policy wait in **Approvals** until a *different* supervisor approves them.
+
+The old `http://localhost:8080/issuance.html` redirects to **Issue card**.
 
 ### 6.3 Console development (hot reload)
 
@@ -378,7 +388,7 @@ Then run the checks in §8 against the server.
 sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 ```
 
-> **The console has no login yet.** Anyone who can reach port 8080 can change setup, block cards and issue cards (which shows a full PAN). The operator id is self-declared. Keep 8080 restricted to named test users until operator authentication (CMS-060) is in place.
+> **Sign-in is local users over plain HTTP in TEST.** Put the CMS behind TLS before any shared use (reverse proxy or `server.ssl.*`) and then set `server.servlet.session.cookie.secure=true`. Keep 8080 restricted to the test subnet and Dexxis; the BASE24 port (7000) to the switch only.
 
 ### 9.7 Upgrade procedure (every new version)
 
@@ -397,6 +407,7 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 - Never start a feature-branch build against a shared database. Once a migration has run, its file can no longer change (Flyway checksum), so a branch build can block the next release.
 - After the restart, check Setup → Numbering & settings (the `ACCOUNT` next number is above the highest existing account number) and Setup → Account types before operators start working.
 - **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
+- **V6 (users, roles, maker-checker):** on the first start after upgrading, the CMS creates `admin` (see §6.2). Give Dexxis the API key (`CMS_DEXXIS_API_KEY`) **before** upgrading, or perso and activation calls fail with 401. Update any script that called the admin API to sign in (HTTP Basic) and to handle 202 approval responses.
 - Admin API changes for any script that calls it: `GET /api/admin/customers` returns a page `{items, total, page, size}`, and `/api/admin/reference` returns full objects (see CHANGELOG, **Breaking**).
 
 ### 9.8 Rollback

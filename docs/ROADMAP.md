@@ -98,7 +98,8 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 
 | ID | Item | Status |
 |---|---|---|
-| CMS-060 | Operator authentication and roles (replace X-Operator header) | Planned |
+| CMS-060 | Operator authentication, roles and maker-checker (replaces X-Operator) | Done |
+| CMS-067 | SSO / LDAP / Active Directory sign-in instead of local passwords | Planned |
 | CMS-061 | PAN keys from KMS / HSM-wrapped store; key rotation | Planned |
 | CMS-062 | mTLS / allow-list for Dexxis and corehost interfaces | Planned |
 | CMS-063 | Reconciliation report (CMS vs corehost journal) | Planned |

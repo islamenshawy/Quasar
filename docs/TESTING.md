@@ -100,11 +100,26 @@ Dev profile only. Every case goes through the real TCP interface via the corehos
 | I15-I16 | 1804/811 key change, then a PIN under the new ZPK | 800, 000 |
 | I17-I18 | Messages recorded; seeded ZPK restored | pass |
 
+## 3c. Security catalogue (`scripts/security-test.sh`)
+
+Dev profile (dev users). Every test script signs in: operator for changes, supervisor for approvals (`CMS_USER`, `CMS_PASSWORD`, `SUP_USER`, `SUP_PASSWORD`, `CMS_DEXXIS_API_KEY` override the dev defaults).
+
+| ID | Case | Expected |
+|---|---|---|
+| S01-S03 | Anonymous call, public version, wrong password | 401, 200, 401 |
+| S04-S07 | Viewer reads / writes; operator changes setup; operator opens Users | 200, 403, 403, 403 |
+| S08-S14 | Supervisor setup change; same supervisor approves; operator approves; reject without reason; second supervisor approves; change applied; invalid change | 202, FOUR_EYES, 403, 422, APPROVED, applied, 422 at submission |
+| S15-S22 | New user with temporary password; forced change; weak password; lock after 5 failures; admin reset unlocks | as named |
+| S23-S26 | Console session: sign-in with CSRF token; POST without / with token; /api/auth/me | 200, 403, 200, operator |
+| S27-S29 | Dexxis without key / with key; operator on Dexxis API | 401, reaches service (404), 403 |
+| S30 | Supervisor changes approval policy | 403 (admin only) |
+
 ## 4. Manual UI cases (CMS Console, `/`)
 
 | ID | Steps | Expected |
 |---|---|---|
-| UI-01 | First visit | Operator id prompt; the id is shown in the header and recorded on every change |
+| UI-01 | First visit | Sign-in page; after sign-in the user menu shows name and roles; every change is recorded under that user |
+| UI-01b | Operator posts a funding entry; supervisor opens Approvals | Operator sees "Sent for approval"; supervisor sees the badge and approves; the maker cannot approve |
 | UI-02 | Issue card → New customer, type the full name only | Name on card fills in uppercase, max 26, and stops following once edited |
 | UI-03 | New customer with an invalid name on card (digits) | Clear error, nothing created |
 | UI-04 | Setup → Numbering: CIF source = CMS_GENERATED, then create a customer | CIF field hidden; CIF assigned from the CIF sequence |

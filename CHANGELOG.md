@@ -7,6 +7,19 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 ## [Unreleased]
 
 ### Added
+- **Operator sign-in and roles** (Spring Security): users with BCrypt passwords, roles ADMIN / SUPERVISOR / OPERATOR / VIEWER, lock after 5 failed sign-ins, temporary passwords that must be changed at first sign-in, password policy (10+ characters, upper, lower, digit, symbol). Console uses a session cookie with CSRF protection; scripts may use HTTP Basic. The operator on every audit row is now the signed-in user. (CMS-060)
+- First start creates `admin` (from `CMS_ADMIN_PASSWORD`, or a generated password written to the log once). The dev profile also creates admin, supervisor, supervisor2, operator and viewer. (CMS-060)
+- **Maker-checker**: per-action approval policy (setup changes, ledger entries, hold releases and card limits need approval by default; status changes and PIN-try resets are direct but can be switched on). Requests are validated at submission, approved or rejected by a different SUPERVISOR/ADMIN, and executed as the maker. Console: Approvals page with a pending badge, Approval policy page. (CMS-060)
+- Console: sign-in page, forced password change, user menu, Users page (ADMIN), role-aware buttons.
+- `scripts/security-test.sh`: 30 cases (roles, four-eyes, lock-out, CSRF, Dexxis key).
+
+### Breaking
+- **Dexxis must send `X-Api-Key`** (`CMS_DEXXIS_API_KEY`); without it `/api/dexxis/**` answers 401.
+- Admin API needs authentication; `X-Operator` is ignored. Writes that need approval answer **202** with `{approvalPending, requestId}` instead of the result.
+
+### Migrations
+- `V6__users_roles_approvals.sql`: `app_user`, `user_role`, `approval_policy` (seeded), `approval_request`. No users are created by the migration.
+
 - **BASE24 ISO 8583:1993 interface** (`com.cms.iso`): TCP server for the ATM/POS switch (port 7000), 2-byte or 4-ASCII length prefix, optional static header, jPOS packager from `iso/base24-1993.xml`. Each message is processed on its own virtual thread. **Layout and mapping are provisional until the BASE24 spec arrives (IN-01).** (CMS-051, CMS-052)
 - Message mapping: 1100/1120 pre-auth, 1200/1220 financial and advices, 1220 completion of a 1100, 1420/1421 reversal with partial amount (fields 30 + 4), repeat MTIs answered from the stored response, field 54 balances in responses, field 125 new PIN block. (CMS-053)
 - Network management 1804/1814: sign-on 801, sign-off 802, echo 831, dynamic acquirer ZPK exchange 811 (ZPK under ZMK in field 96, HSM FA, KCV check, new key version, old version retired). (CMS-054)
