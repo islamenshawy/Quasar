@@ -280,10 +280,11 @@ public class AuthorizationService {
         record H(long id, long amount) {}
         H hold = r.original() == null ? null : jdbc.query("""
                 SELECT h.id, h.amount FROM hold h JOIN iso_transaction t ON t.id = h.iso_txn_id
-                 WHERE t.mti = ? AND t.stan = ? AND t.transmission_dt = ? AND t.acquirer_id = ?
+                 WHERE t.mti = ? AND t.stan = ? AND (t.transmission_dt = ? OR t.local_dt = ?) AND t.acquirer_id = ?
                    AND t.card_id = ? AND h.status = 'OPEN' FOR UPDATE OF h
                 """, rs -> rs.next() ? new H(rs.getLong(1), rs.getLong(2)) : null,
-                r.original().mti(), r.original().stan(), r.original().transmissionDt(), r.original().acquirerId(), c.cardId);
+                r.original().mti(), r.original().stan(), r.original().transmissionDt(), r.original().transmissionDt(),
+                r.original().acquirerId(), c.cardId);
 
         if (!force) {
             if (hold == null) {
@@ -350,11 +351,13 @@ public class AuthorizationService {
         O o = r.original() == null ? null : jdbc.query("""
                 SELECT id, txn_type, action_code, reversed, COALESCE(amount, 0), card_id, account_id
                   FROM iso_transaction
-                 WHERE mti = ? AND stan = ? AND transmission_dt = ? AND acquirer_id = ? AND txn_type <> 'REVERSAL'
+                 WHERE mti = ? AND stan = ? AND (transmission_dt = ? OR local_dt = ?) AND acquirer_id = ?
+                   AND txn_type <> 'REVERSAL'
                  ORDER BY id DESC LIMIT 1 FOR UPDATE
                 """, rs -> rs.next() ? new O(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getBoolean(4),
                         rs.getLong(5), (Long) rs.getObject(6), (Long) rs.getObject(7)) : null,
-                r.original().mti(), r.original().stan(), r.original().transmissionDt(), r.original().acquirerId());
+                r.original().mti(), r.original().stan(), r.original().transmissionDt(), r.original().transmissionDt(),
+                r.original().acquirerId());
 
         if (o == null) return finish(txnId, REVERSAL_ACCEPTED, "original not found", null);
         jdbc.update("UPDATE iso_transaction SET card_id = ?, account_id = ?, original_key = ? WHERE id = ?",

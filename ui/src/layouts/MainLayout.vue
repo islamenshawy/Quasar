@@ -9,6 +9,10 @@
           <q-badge color="warning" text-color="dark" label="TEST" class="gt-xs" />
         </q-toolbar-title>
 
+        <q-chip dense square :color="iso.color" text-color="white" icon="lan" class="gt-sm">
+          Switch {{ iso.label }}
+          <q-tooltip>{{ iso.detail }}</q-tooltip>
+        </q-chip>
         <q-chip dense square :color="hsm.color" text-color="white" :icon="hsm.icon" class="gt-xs"
                 clickable @click="checkHsm">
           HSM {{ hsm.status }}
@@ -25,7 +29,7 @@
 
     <q-drawer v-model="drawer" show-if-above bordered :width="250">
       <q-list padding>
-        <template v-for="group in nav" :key="group.title">
+        <template v-for="group in navGroups" :key="group.title">
           <q-item-label header class="text-uppercase text-caption">{{ group.title }}</q-item-label>
           <q-item v-for="item in group.items" :key="item.to" :to="item.to" :exact="item.exact"
                   clickable v-ripple active-class="nav-active">
@@ -48,7 +52,7 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, reactive, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { api } from '../lib/api.js'
 import { session, setOperator } from '../lib/session.js'
@@ -58,6 +62,8 @@ const $q = useQuasar()
 const drawer = ref(false)
 const version = reactive({})
 const hsm = reactive({ status: '…', color: 'grey-7', icon: 'memory', detail: 'Checking' })
+const iso = reactive({ label: '…', color: 'grey-7', detail: 'Checking' })
+const devTools = ref(false)
 
 const nav = [
   {
@@ -89,6 +95,24 @@ const nav = [
     ]
   }
 ]
+
+const navGroups = computed(() => devTools.value
+  ? [...nav.slice(0, 2), { title: 'Dev tools', items: [{ to: '/switch-simulator', label: 'Switch simulator', icon: 'lan' }] }, ...nav.slice(2)]
+  : nav)
+
+async function checkIso () {
+  try {
+    const s = await api.get('/admin/iso/status', { quiet: true })
+    Object.assign(iso, !s.enabled
+      ? { label: 'OFF', color: 'grey-7', detail: 'ISO interface disabled' }
+      : !s.running
+        ? { label: 'DOWN', color: 'negative', detail: `Not listening on ${s.port}` }
+        : { label: `${s.connections} link${s.connections === 1 ? '' : 's'}`, color: s.connections ? 'positive' : 'blue-grey-6',
+            detail: `Port ${s.port} · ${s.received} messages since start` })
+  } catch {
+    Object.assign(iso, { label: '?', color: 'grey-7', detail: 'CMS not reachable' })
+  }
+}
 
 function toggleDark () {
   $q.dark.toggle()
@@ -127,7 +151,9 @@ onMounted(async () => {
   loadReference().catch(() => {})
   api.get('/version', { quiet: true }).then(v => Object.assign(version, v)).catch(() => {})
   checkHsm()
-  timer = setInterval(checkHsm, 30000)
+  checkIso()
+  api.get('/dev/iso/status', { quiet: true }).then(() => { devTools.value = true }).catch(() => {})
+  timer = setInterval(() => { checkHsm(); checkIso() }, 30000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 </script>

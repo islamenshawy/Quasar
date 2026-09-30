@@ -127,6 +127,7 @@ The CMS reads configuration from `application.yml`, from the active profile file
 | `CMS_PAN_ENC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_PAN_HMAC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_HSM_HOST` / `CMS_HSM_PORT` | no | `localhost` / `1500` | Point at the real payShield later |
+| `CMS_ISO_PORT` / `CMS_ISO_ENABLED` | no | `7000` / `true` | BASE24 switch interface. Also `cms.iso.length-prefix` (BINARY2 / ASCII4) and `cms.iso.header-length`; set them from the BASE24 spec |
 
 > **Important:** the PAN keys encrypt card numbers at rest. If you change them, existing cards can no longer be decrypted. On TEST, generate them once (`openssl rand -base64 32`), store them in the env file (§9.2), and never rotate them casually.
 
@@ -259,6 +260,7 @@ Run these checks in order. Each must pass before moving to the next.
 | 3 | Console | Open `http://localhost:8080/` | Dashboard loads and the header shows **HSM UP**; Setup → Account types lists the seeded types |
 | 4 | Smoke test | `./scripts/smoke-test.sh` | `15 passed, 0 failed` |
 | 5 | Authorization (DEV only) | `./scripts/auth-test.sh` | `32 passed, 0 failed` |
+| 5b | BASE24 interface (DEV only) | `./scripts/iso-test.sh` | `18 passed, 0 failed` |
 | 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
 If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
@@ -368,6 +370,7 @@ Then run the checks in §8 against the server.
 | Port | Service | Open to |
 |---|---|---|
 | 8080 | CMS (Console, admin API, Dexxis API) | Test users' subnet and the Dexxis server **only** |
+| 7000 | BASE24 ISO interface (`cms.iso.port`) | The switch (corehost) only |
 | 1500 | hsm-sim | localhost only (do not expose) |
 | 5432 | PostgreSQL | localhost only |
 

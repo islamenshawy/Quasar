@@ -24,5 +24,13 @@ cms:
   keys:
     kiosk-zpk-name: ZPK_KIOSK     # ZPK under which the kiosk EPP sends PIN blocks
     corehost-zpk-name: ZPK_COREHOST
+    corehost-zmk-name: ZMK_COREHOST   # protects ZPKs received in 1804 key change
+  iso:
+    # BASE24 ISO 8583:1993 interface for the ATM / POS switch (CMS-051..054). Layout is provisional (IN-01).
+    enabled: true
+    port: 7000
+    length-prefix: BINARY2        # BINARY2 (2-byte length) or ASCII4
+    header-length: 0              # static BASE24 header in front of the MTI, echoed back; 0 = none
+    packager: iso/base24-1993.xml
   issuance:
     pin-block-format: ISO_0
