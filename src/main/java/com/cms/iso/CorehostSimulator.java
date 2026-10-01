@@ -6,6 +6,8 @@ import com.cms.security.PanCrypto;
 import org.jpos.iso.ISOException;
 import org.jpos.iso.ISOMsg;
 import org.jpos.iso.ISOUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -63,7 +65,10 @@ public class CorehostSimulator {
     private final String host;
     private final int port;
     private final byte[] zmk;
+    private static final Logger log = LoggerFactory.getLogger(CorehostSimulator.class);
+
     private final AtomicReference<byte[]> zpk = new AtomicReference<>();
+    private final String zpkName;
     private final AtomicInteger stan = new AtomicInteger((int) (System.currentTimeMillis() % 800000) + 100000);
     private final Map<String, Sent> sent = new ConcurrentHashMap<>();
     private final Map<String, byte[]> lastFrames = new ConcurrentHashMap<>();
@@ -77,7 +82,8 @@ public class CorehostSimulator {
                              @Value("${cms.iso.port:7000}") int port,
                              @Value("${cms.dev.acquirer-zpk-clear:4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E}") String zpkClear,
                              @Value("${cms.dev.zmk-clear:1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A}") String zmkClear,
-                             @Value("${cms.dev.imk-ac-clear:4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D}") String imkClear) {
+                             @Value("${cms.dev.imk-ac-clear:4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D}") String imkClear,
+                             @Value("${cms.keys.corehost-zpk-name}") String zpkName) {
         this.codec = codec;
         this.jdbc = jdbc;
         this.panCrypto = panCrypto;
@@ -86,12 +92,14 @@ public class CorehostSimulator {
         this.zpk.set(HEX.parseHex(zpkClear));
         this.zmk = HEX.parseHex(zmkClear);
         this.imk = HEX.parseHex(imkClear);
+        this.zpkName = zpkName;
     }
 
     public Map<String, Object> status() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("target", host + ":" + port);
         m.put("acquirerZpkKcv", kcv(zpk.get()));
+        m.put("cmsZpkKcv", activeZpkKcv());
         m.put("sentMessages", sent.size());
         return m;
     }
@@ -101,6 +109,7 @@ public class CorehostSimulator {
     public SimResult send(SimRequest r) throws ISOException, IOException {
         String type = r.type() == null ? "BALANCE_INQUIRY" : r.type();
         boolean advice = Boolean.TRUE.equals(r.advice());
+        syncZpk();
 
         // a repeat resends the stored frame of an earlier message (MTI xxx1), to test duplicate handling
         if (Boolean.TRUE.equals(r.repeat()) && r.originalRef() != null) {
@@ -203,6 +212,30 @@ public class CorehostSimulator {
         SimResult r = exchange(s, m, false);
         if (newZpk != null && NetworkManagementService.ACCEPTED.equals(r.actionCode())) zpk.set(newZpk);
         return r;
+    }
+
+    /**
+     * The simulator holds its ZPK in memory only: after a restart it is back to the seed key while the CMS
+     * still has the key from the last 811. A real switch keeps its keys, so here: before sending, compare the
+     * check values and, when they differ, run the key exchange with the key this simulator holds.
+     */
+    private void syncZpk() {
+        String cms = activeZpkKcv();
+        String mine = kcv(zpk.get());
+        if (cms == null || cms.equalsIgnoreCase(mine)) return;
+        log.warn("Simulator ZPK (KCV {}) differs from the CMS acquirer ZPK (KCV {}); re-running key exchange 811", mine, cms);
+        try {
+            SimResult r = network("811", HEX.formatHex(zpk.get()));
+            if (!NetworkManagementService.ACCEPTED.equals(r.actionCode())) {
+                log.warn("Key exchange refused: {} {}", r.actionCode(), r.actionText());
+            }
+        } catch (Exception e) {
+            log.warn("Key exchange failed: {}", e.getMessage());
+        }
+    }
+
+    private String activeZpkKcv() {
+        return jdbc.query("SELECT kcv FROM hsm_key WHERE key_name = ? AND active", rs -> rs.next() ? rs.getString(1) : null, zpkName);
     }
 
     // ---------------- plumbing ----------------

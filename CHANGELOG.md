@@ -23,6 +23,7 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 
 ### Fixed
 - `scripts/smoke-test.sh` contained a second copy of itself since CMS-060 (an edit pasted the rest of the file), so bash ended with a syntax error after the 15 cases and CI's syntax check failed. Restored.
+- Dev switch simulator: after a CMS restart it went back to the seed acquirer ZPK while the CMS kept the key from the last Key exchange, so every PIN transaction failed with HSM EC error 20 (909). The simulator now compares check values before sending and re-runs the key exchange when they differ; its status shows both KCVs.
 
 ### Migrations
 - `V8__emv_cryptograms.sql`: `card_product.emv_scheme`, `card_product.emv_data_list`, `card.last_atc`.
