@@ -1,6 +1,6 @@
 <template>
   <q-page padding class="page">
-    <PageHeader title="Dashboard" subtitle="Issuance activity and portfolio status">
+    <PageHeader title="Dashboard" :subtitle="greeting">
       <template #actions>
         <q-btn v-if="can.write" outline no-caps color="primary" icon="person_add" label="New customer" @click="newCustomer = true" />
         <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
@@ -11,12 +11,12 @@
       <div v-for="t in tiles" :key="t.label" class="col-6 col-md-3">
         <q-card flat bordered class="cursor-pointer full-height" @click="$router.push(t.to)">
           <q-card-section>
-            <div class="row items-center no-wrap">
+            <div class="row items-center no-wrap q-gutter-x-md">
+              <div class="qz-tile-icon" :class="`tone-${t.tone}`"><q-icon :name="t.icon" size="24px" /></div>
               <div class="col">
                 <div class="stat-value">{{ t.value }}</div>
                 <div class="stat-label">{{ t.label }}</div>
               </div>
-              <q-icon :name="t.icon" size="32px" :color="t.color" />
             </div>
             <div class="text-caption muted q-mt-xs">{{ t.note }}</div>
           </q-card-section>
@@ -105,7 +105,7 @@ import { computed, onMounted, ref } from 'vue'
 import PageHeader from '../components/PageHeader.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import { api } from '../lib/api.js'
-import { can } from '../lib/session.js'
+import { can, session } from '../lib/session.js'
 import { dateTime, label, money, statusColor } from '../lib/format.js'
 
 const d = ref({})
@@ -116,19 +116,25 @@ const approvalRate = computed(() => {
   return n ? Math.round(100 * t.value.approved / n) + '%' : '—'
 })
 const recent = ref([])
+const greeting = computed(() => {
+  const h = new Date().getHours()
+  const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+  const name = session.user?.fullName?.split(' ')[0] || session.user?.username || ''
+  return `${part}${name ? ', ' + name : ''}. Here is your portfolio today.`
+})
 const newCustomer = ref(false)
 
 const sum = o => Object.values(o || {}).reduce((a, b) => a + b, 0)
 const toRows = o => Object.entries(o || {}).map(([key, value]) => ({ key, value })).sort((a, b) => b.value - a.value)
 
 const tiles = computed(() => [
-  { label: 'Active customers', value: d.value.customers?.ACTIVE ?? 0, icon: 'people', color: 'primary',
+  { label: 'Active customers', value: d.value.customers?.ACTIVE ?? 0, icon: 'people', tone: 'indigo',
     note: `${d.value.customersToday ?? 0} new today`, to: '/customers' },
-  { label: 'Open accounts', value: sum(d.value.accounts) - (d.value.accounts?.CLOSED ?? 0), icon: 'account_balance', color: 'secondary',
+  { label: 'Open accounts', value: sum(d.value.accounts) - (d.value.accounts?.CLOSED ?? 0), icon: 'account_balance', tone: 'blue',
     note: `${(d.value.accounts?.BLOCKED ?? 0) + (d.value.accounts?.DEBIT_BLOCKED ?? 0)} blocked`, to: '/accounts' },
-  { label: 'Active cards', value: d.value.cards?.ACTIVE ?? 0, icon: 'credit_card', color: 'positive',
+  { label: 'Active cards', value: d.value.cards?.ACTIVE ?? 0, icon: 'credit_card', tone: 'flare',
     note: `${d.value.activatedToday ?? 0} activated today`, to: '/cards?status=ACTIVE' },
-  { label: 'Waiting for print', value: d.value.cards?.PENDING_PRINT ?? 0, icon: 'print', color: 'warning',
+  { label: 'Waiting for print', value: d.value.cards?.PENDING_PRINT ?? 0, icon: 'print', tone: 'amber',
     note: `${d.value.issuedToday ?? 0} issued today`, to: '/cards?status=PENDING_PRINT' }
 ])
 

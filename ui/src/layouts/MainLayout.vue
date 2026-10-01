@@ -1,23 +1,26 @@
 <template>
   <q-layout view="hHh LpR fFf">
-    <q-header elevated class="bg-secondary text-white">
-      <q-toolbar>
+    <q-header class="qz-space">
+      <q-toolbar style="min-height: 60px" class="q-gutter-x-sm">
         <q-btn flat dense round icon="menu" aria-label="Menu" @click="drawer = !drawer" />
-        <q-toolbar-title class="row items-center no-wrap q-gutter-x-sm">
-          <q-icon name="credit_card" />
-          <span class="text-weight-medium">CMS Console</span>
-          <q-badge color="warning" text-color="dark" label="TEST" class="gt-xs" />
-        </q-toolbar-title>
+        <router-link to="/" class="row items-center no-wrap q-gutter-x-sm text-white" style="text-decoration: none">
+          <QuasarMark :size="34" />
+          <div>
+            <div class="qz-wordmark qz-gradient-text" style="font-size: 21px">Quasar</div>
+            <div class="gt-xs" style="font-size: 10.5px; letter-spacing: .16em; opacity: .65; margin-top: 3px">CARD MANAGEMENT</div>
+          </div>
+        </router-link>
+        <span class="qz-env gt-xs q-ml-md">TEST</span>
+        <q-space />
 
-        <q-chip dense square :color="iso.color" text-color="white" icon="lan" class="gt-sm">
-          Switch {{ iso.label }}
+        <span class="qz-status gt-sm">
+          <span class="qz-dot" :class="iso.tone" /> Switch {{ iso.label }}
           <q-tooltip>{{ iso.detail }}</q-tooltip>
-        </q-chip>
-        <q-chip dense square :color="hsm.color" text-color="white" :icon="hsm.icon" class="gt-xs"
-                clickable @click="checkHsm">
-          HSM {{ hsm.status }}
-          <q-tooltip>{{ hsm.detail }}</q-tooltip>
-        </q-chip>
+        </span>
+        <span class="qz-status clickable gt-xs" role="button" tabindex="0" @click="checkHsm" @keyup.enter="checkHsm">
+          <span class="qz-dot" :class="hsm.tone" /> HSM {{ hsm.status }}
+          <q-tooltip>{{ hsm.detail }} · click to recheck</q-tooltip>
+        </span>
         <q-btn flat round dense :icon="$q.dark.isActive ? 'light_mode' : 'dark_mode'" aria-label="Toggle dark mode"
                @click="toggleDark" />
         <q-btn flat round dense icon="how_to_reg" aria-label="Approvals" to="/approvals" class="q-ml-xs">
@@ -46,7 +49,7 @@
       </q-toolbar>
     </q-header>
 
-    <q-drawer v-model="drawer" show-if-above bordered :width="250">
+    <q-drawer v-model="drawer" show-if-above bordered :width="256" class="qz-drawer">
       <q-list padding>
         <template v-for="group in navGroups" :key="group.title">
           <q-item-label header class="text-uppercase text-caption">{{ group.title }}</q-item-label>
@@ -60,8 +63,8 @@
           </q-item>
         </template>
       </q-list>
-      <div class="q-px-md q-pb-md text-caption muted">
-        cms-core {{ version.version || '…' }}
+      <div class="q-px-lg q-pb-md text-caption muted row items-center q-gutter-x-xs">
+        <QuasarMark :size="16" /><span>Quasar {{ version.version || '…' }}</span>
       </div>
     </q-drawer>
 
@@ -78,14 +81,15 @@ import { computed, onMounted, onBeforeUnmount, reactive, ref } from 'vue'
 import { useQuasar } from 'quasar'
 import { useRouter } from 'vue-router'
 import { api } from '../lib/api.js'
+import QuasarMark from '../components/QuasarMark.vue'
 import { can, clearUser, session } from '../lib/session.js'
 import { loadReference } from '../lib/reference.js'
 
 const $q = useQuasar()
 const drawer = ref(false)
 const version = reactive({})
-const hsm = reactive({ status: '…', color: 'grey-7', icon: 'memory', detail: 'Checking' })
-const iso = reactive({ label: '…', color: 'grey-7', detail: 'Checking' })
+const hsm = reactive({ status: '…', tone: '', detail: 'Checking' })
+const iso = reactive({ label: '…', tone: '', detail: 'Checking' })
 const devTools = ref(false)
 const pendingApprovals = ref(0)
 const router = useRouter()
@@ -145,13 +149,13 @@ async function checkIso () {
   try {
     const s = await api.get('/admin/iso/status', { quiet: true })
     Object.assign(iso, !s.enabled
-      ? { label: 'OFF', color: 'grey-7', detail: 'ISO interface disabled' }
+      ? { label: 'OFF', tone: '', detail: 'ISO interface disabled' }
       : !s.running
-        ? { label: 'DOWN', color: 'negative', detail: `Not listening on ${s.port}` }
-        : { label: `${s.connections} link${s.connections === 1 ? '' : 's'}`, color: s.connections ? 'positive' : 'blue-grey-6',
+        ? { label: 'DOWN', tone: 'bad', detail: `Not listening on ${s.port}` }
+        : { label: `${s.connections} link${s.connections === 1 ? '' : 's'}`, tone: s.connections ? 'ok' : 'idle',
             detail: `Port ${s.port} · ${s.received} messages since start` })
   } catch {
-    Object.assign(iso, { label: '?', color: 'grey-7', detail: 'CMS not reachable' })
+    Object.assign(iso, { label: '?', tone: '', detail: 'Quasar not reachable' })
   }
 }
 
@@ -165,10 +169,10 @@ async function checkHsm () {
     const r = await fetch('/api/admin/hsm/health')
     const b = await r.json()
     Object.assign(hsm, r.ok
-      ? { status: 'UP', color: 'positive', icon: 'memory', detail: `LMK check ${b.lmkCheckValue} · firmware ${b.firmware}` }
-      : { status: 'DOWN', color: 'negative', icon: 'warning', detail: b.reason || 'Unavailable' })
+      ? { status: 'UP', tone: 'ok', detail: `LMK check ${b.lmkCheckValue} · firmware ${b.firmware}` }
+      : { status: 'DOWN', tone: 'bad', detail: b.reason || 'Unavailable' })
   } catch {
-    Object.assign(hsm, { status: '?', color: 'grey-7', icon: 'help', detail: 'CMS not reachable' })
+    Object.assign(hsm, { status: '?', tone: '', detail: 'Quasar not reachable' })
   }
 }
 

@@ -50,7 +50,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 
 | ID | Item | Status |
 |---|---|---|
-| CMS-070 | CMS Console (Vue 3 + Quasar) built into the jar; replaces `/issuance.html` | Done (branch `feature/CMS-070-admin-console`) |
+| CMS-070 | Quasar console (Vue 3 + Quasar) built into the jar; replaces `/issuance.html` | Done (branch `feature/CMS-070-admin-console`) |
 | CMS-071 | Reference data screens: currencies, segments, account types, card products, eligibility matrix | Done |
 | CMS-072 | CIF / account numbering: sequences, CIF source setting, per-type number source, allowed currencies, max per customer | Done |
 | CMS-073 | Customer and account maintenance: search, edit, status changes with reason | Done |

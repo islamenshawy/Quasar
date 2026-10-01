@@ -133,7 +133,7 @@ Dev profile (uses the dev time helpers to age cards and holds).
 | L24-L26 | Pre-auth hold expired; HOLD_EXPIRY | funds available again |
 | L27 | Job list | last runs recorded |
 
-## 4. Manual UI cases (CMS Console, `/`)
+## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |
 |---|---|---|

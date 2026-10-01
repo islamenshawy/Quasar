@@ -12,7 +12,7 @@ Issuer-side card management: operator-driven card issuance, perso data for Dexxi
 ## Architecture
 
 ```
-Operator ──> CMS Console (/)              Setup, customers, accounts, cards, audit; issue card (PENDING_PRINT)
+Operator ──> Quasar console (/)              Setup, customers, accounts, cards, audit; issue card (PENDING_PRINT)
 Kiosk (NCR KGS) ──> Dexxis ──> CMS         Search card by PAN (perso data) / Activate + PIN / Cancel
 ATM ──> Corehost ──BASE24──> CMS           Balance inquiry / Withdrawal / PIN change / Reversal   (0.6.0)
                               │
@@ -47,4 +47,4 @@ psql -h localhost -U cms -d cms -f scripts/seed-dev.sql
 ./scripts/smoke-test.sh
 ```
 
-Then open the CMS Console at `http://localhost:8080/` and sign in (dev users: `admin`, `supervisor`, `operator`, `viewer`; password `Dev-Passw0rd!`). For console development with hot reload: `cd ui && npm install && npm run dev` (port 9000, API proxied to 8080).
+Then open the Quasar console at `http://localhost:8080/` and sign in (dev users: `admin`, `supervisor`, `operator`, `viewer`; password `Dev-Passw0rd!`). For console development with hot reload: `cd ui && npm install && npm run dev` (port 9000, API proxied to 8080).

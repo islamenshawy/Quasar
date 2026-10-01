@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Applies to | cms-core **0.4.0** with the CMS Console (CMS-070 to CMS-075), hsm-sim **1.0.0** |
+| Applies to | cms-core **0.4.0** with the Quasar console (CMS-070 to CMS-075), hsm-sim **1.0.0** |
 | Environments covered | DEV (developer laptop), TEST (shared test server) |
 | Owner | Development chapter, tech lead |
 | Last updated | 2026-09-30 |
@@ -20,10 +20,10 @@
 | Database | Local PostgreSQL | PostgreSQL on the server |
 | How it runs | `mvn spring-boot:run` or `java -jar` | `systemd` services |
 | Spring profile | `dev` | `test` (you create `application-test.yml`, see §9.3) |
-| CMS Console | `http://localhost:8080/` (or `:9000` with `npm run dev`, §6.3) | `http://<server>:8080/` from the test subnet only |
+| Quasar console | `http://localhost:8080/` (or `:9000` with `npm run dev`, §6.3) | `http://<server>:8080/` from the test subnet only |
 | Data | Test data only | Test data only. **Never real cards, PANs or keys.** |
 
-The CMS Console is part of the cms-core jar. There is no separate web server or front-end deployment.
+The Quasar console is part of the cms-core jar. There is no separate web server or front-end deployment.
 
 ---
 
@@ -86,7 +86,7 @@ cms/
 ├── docs/                        DEPLOYMENT, TESTING, DECISIONS, ROADMAP
 ├── hsm-sim/HsmSimulator.java    payShield simulator (single file, no build)
 ├── scripts/                     seed-dev.sql, smoke-test.sh
-├── ui/                          CMS Console (Vue 3 + Quasar); built into the jar by Maven
+├── ui/                          Quasar console (Vue 3 + Quasar); built into the jar by Maven
 └── src/main/...                 CMS source, config, Flyway migrations
 ```
 
@@ -181,7 +181,7 @@ Useful options:
 mvn clean verify        # console build + compile + unit tests + jar with version info
 ```
 
-One build produces one jar that contains the backend **and** the CMS Console:
+One build produces one jar that contains the backend **and** the Quasar console:
 
 1. `frontend-maven-plugin` installs its own Node (version in `pom.xml`, `node.version`) into `target/node`. Your installed Node, if any, is not used.
 2. `npm install` in `ui/` (exact versions from `ui/package-lock.json`), then `npm run build` into `ui/dist/`.
@@ -243,7 +243,7 @@ It loads:
 
 After seeding, products and eligibility are maintained in the console (§7.1). Only the **HSM keys** still need SQL, because the console never handles key material.
 
-### 7.1 First-time configuration in the CMS Console
+### 7.1 First-time configuration in the Quasar console
 
 Migrations seed a starting set of currencies (EGP, USD, AED), segments and account types. Review them under **Setup**, in this order, since each step uses the previous one:
 
@@ -403,7 +403,7 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 5. Verify with §8: the version must show the new number, and the smoke test must pass.
 6. Record the deployment in [TESTING.md](TESTING.md) §6.
 
-**Upgrading to the CMS Console release (migration V4):**
+**Upgrading to the Quasar console release (migration V4):**
 
 - V4 is additive and keeps current behaviour: every account type stays CMS-generated from the `ACCOUNT` sequence (continuing after the last `account_number_seq` value), allows every existing currency, and the CIF source is `EITHER`.
 - Back up first (step 2). V4 cannot be undone except by restoring that backup.
