@@ -2,20 +2,26 @@ package com.cms.api;
 
 import com.cms.card.IssuanceException;
 import com.cms.hsm.HsmException;
+import com.cms.security.PanKeyException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
+import java.util.UUID;
 
 @RestControllerAdvice
 public class ApiErrorHandler {
@@ -71,5 +77,28 @@ public class ApiErrorHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(Map.of("code", "HSM_ERROR", "message", "Security module error " + e.command()
                         + (e.errorCode() == null ? "" : " / " + e.errorCode())));
+    }
+
+    @ExceptionHandler(PanKeyException.class)
+    ResponseEntity<Map<String, String>> panKey(PanKeyException e) {
+        log.error("PAN key mismatch: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("code", "PAN_KEY_MISMATCH", "message", e.getMessage()));
+    }
+
+    /**
+     * Anything not handled above: a JSON body with a reference that matches the log line, instead of
+     * Spring's bare 500. Spring's own errors (403, 404, 405, ...) are passed on unchanged.
+     */
+    @ExceptionHandler(Exception.class)
+    ResponseEntity<Map<String, String>> unexpected(Exception e) throws Exception {
+        if (e instanceof AccessDeniedException || e instanceof AuthenticationException || e instanceof ErrorResponse
+                || AnnotationUtils.findAnnotation(e.getClass(), ResponseStatus.class) != null) {
+            throw e;
+        }
+        String ref = UUID.randomUUID().toString().substring(0, 8);
+        log.error("Unexpected error ref={}", ref, e);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("code", "INTERNAL_ERROR", "message", "Unexpected error; reference " + ref + " in the CMS log"));
     }
 }

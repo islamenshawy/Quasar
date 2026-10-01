@@ -29,6 +29,7 @@ cms:
     # TEST ONLY. Base64 256-bit keys. In production these come from a KMS/HSM, never from config.
     pan-enc-key: ${CMS_PAN_ENC_KEY}
     pan-hmac-key: ${CMS_PAN_HMAC_KEY}
+    pan-key-check: ${CMS_PAN_KEY_CHECK:FAIL}     # FAIL: refuse to start when the keys match none of the newest live cards; WARN: log only
   keys:
     kiosk-zpk-name: ZPK_KIOSK     # ZPK under which the kiosk EPP sends PIN blocks
     corehost-zpk-name: ZPK_COREHOST

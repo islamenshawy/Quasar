@@ -14,6 +14,13 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 
 ### Changed
 - HSM messages are exchanged byte for byte (ISO-8859-1 instead of US-ASCII) so binary fields pass unchanged; ASCII commands are unaffected.
+- A stored PAN that cannot be decrypted (CMS started with a different `CMS_PAN_ENC_KEY` from the one the card was issued under) is answered `503 PAN_KEY_MISMATCH` with an explanation instead of a bare 500.
+- Startup check of the PAN keys against the newest live cards: mismatches are logged with the card ids; outside dev the CMS refuses to start when the keys match none of them (`CMS_PAN_KEY_CHECK`, FAIL by default, WARN on dev).
+- Admin API: unexpected errors return `{"code":"INTERNAL_ERROR"}` with a reference that matches the log line.
+- BASE24: a request that fails outside the authorization engine is now answered (904 when it cannot be mapped, 909 otherwise) instead of being left to time out at the switch.
+
+### Fixed
+- `scripts/smoke-test.sh` contained a second copy of itself since CMS-060 (an edit pasted the rest of the file), so bash ended with a syntax error after the 15 cases and CI's syntax check failed. Restored.
 
 ### Migrations
 - `V8__emv_cryptograms.sql`: `card_product.emv_scheme`, `card_product.emv_data_list`, `card.last_atc`.

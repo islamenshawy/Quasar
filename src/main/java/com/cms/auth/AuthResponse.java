@@ -21,7 +21,7 @@ public record AuthResponse(String actionCode, String authId, String currencyCode
         return ActionCode.isApproval(actionCode);
     }
 
-    static AuthResponse decline(String code, String reason, Long txnId) {
+    public static AuthResponse decline(String code, String reason, Long txnId) {
         return new AuthResponse(code, null, null, null, null, txnId, reason);
     }
 }

@@ -8,6 +8,7 @@ cms:
     # DEV ONLY fixed keys so restarts can still decrypt stored PANs. Never use outside dev.
     pan-enc-key: ${CMS_PAN_ENC_KEY:ZGV2LW9ubHktcGFuLWVuYy1rZXktMzItYnl0ZXMtISE=}
     pan-hmac-key: ${CMS_PAN_HMAC_KEY:ZGV2LW9ubHktcGFuLWhtYWMta2V5LTMyLWJ5dGVzLSE=}
+    pan-key-check: ${CMS_PAN_KEY_CHECK:WARN}     # log only; other profiles refuse to start when no card matches
   dexxis:
     api-key: ${CMS_DEXXIS_API_KEY:dev-dexxis-key}
   dev:

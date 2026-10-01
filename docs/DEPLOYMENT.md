@@ -126,6 +126,7 @@ The CMS reads configuration from `application.yml`, from the active profile file
 | `SPRING_DATASOURCE_URL` | no | default `jdbc:postgresql://localhost:5432/cms` | Override for another host **or port**, e.g. `jdbc:postgresql://localhost:1455/cms` if PostgreSQL was installed on a non-default port |
 | `CMS_PAN_ENC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_PAN_HMAC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
+| `CMS_PAN_KEY_CHECK` | no | `FAIL` (dev: `WARN`) | Startup check of the PAN keys against the newest live cards. FAIL refuses to start when they match none of them; WARN only logs |
 | `CMS_HSM_HOST` / `CMS_HSM_PORT` | no | `localhost` / `1500` | Point at the real payShield later |
 | `CMS_ADMIN_PASSWORD` | first start | dev profile has its own users | Password of the bootstrap `admin` (must be changed at first sign-in). Empty = generated and written to the log once |
 | `CMS_DEXXIS_API_KEY` | TEST: yes | `dev-dexxis-key` | Key Dexxis sends in `X-Api-Key`. Empty = Dexxis calls refused. Long random value, e.g. `openssl rand -hex 32` |
@@ -444,6 +445,7 @@ The simulator uses the **same clear test keys** you will load into the payShield
 | `Validate failed: Migrations have failed validation` | An applied migration file was edited | Never edit applied migrations (see CONTRIBUTING). Restore the original file. |
 | Health shows `DOWN` / `cannot connect to HSM` | Simulator not running, wrong port | Start hsm-sim, check `cms.hsm.port` |
 | `HSM header mismatch` | Header length differs between CMS and HSM | Align `header-length` with the HSM setting |
+| `PAN_KEY_MISMATCH`, or at startup `CMS_PAN_ENC_KEY does not decrypt card(s) [...]` | The CMS runs with different PAN keys from the ones those cards were issued under (often: variables not set in this terminal, so the dev default is used) | Start with the original `CMS_PAN_ENC_KEY` / `CMS_PAN_HMAC_KEY`. If they are lost, those card numbers cannot be recovered: cancel the cards and reissue |
 | `HSM_ERROR ... / 15` | Input data error, wrong field layout or key token | Check the key rows in `hsm_key`; on a real HSM, check the command layout |
 | `KEY_MISSING` | Seed not loaded or key name differs | Run `seed-dev.sql`; check product key names |
 | `PRODUCT_NOT_ELIGIBLE` / "No product is allowed" in Issue card | No eligibility for that account type × segment, or the currency differs | Setup → Card products → product → Eligibility; check the product and account currency |
