@@ -48,7 +48,7 @@ public class CorehostSimulator {
     public record SimRequest(String type, String channel, Long cardId, String pan, String pin, String newPin,
                              Long amount, String currency, String terminalId, String acquirerId, String mcc,
                              String merchant, String originalRef, Long amountCompleted, Boolean advice,
-                             Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc) {}
+                             Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc, String tvr) {}
 
     public record SimResult(String ref, String mti, Map<String, String> request, Map<String, String> response,
                             String actionCode, String actionText, boolean approved, Long ledgerBalance,
@@ -261,7 +261,7 @@ public class CorehostSimulator {
     private byte[] chipData(String ref, SimRequest r, String pan, String pc, long amount, String currency, LocalDateTime now) {
         if (r.cardId() == null) throw new IssuanceException("INVALID_REQUEST", "Chip transactions need cardId");
         Map<String, Object> p = jdbc.queryForMap("""
-                SELECT k.psn, pr.emv_scheme, pr.emv_data_list FROM card k JOIN card_product pr ON pr.id = k.product_id WHERE k.id = ?
+                SELECT k.psn, pr.emv_scheme, pr.emv_data_list, pr.scheme FROM card k JOIN card_product pr ON pr.id = k.product_id WHERE k.id = ?
                 """, r.cardId());
         String psn = (String) p.get("psn");
         char scheme = "VISA_CVN10".equals(p.get("emv_scheme")) ? '0' : '1';
@@ -278,13 +278,18 @@ public class CorehostSimulator {
         byte[] atc = {(byte) (atcValue >> 8), (byte) atcValue};
         byte[] un = new byte[4];
         new SecureRandom().nextBytes(un);
+        boolean atm = "ATM".equals(r.channel()) || "01".equals(pc.substring(0, 2)) || "31".equals(pc.substring(0, 2));
+        boolean pinEntered = r.pin() != null && !r.pin().isBlank();
+        String tvr = r.tvr() != null && r.tvr().matches("[0-9A-Fa-f]{10}") ? r.tvr() : "0000000000";
         Map<String, byte[]> t = new java.util.LinkedHashMap<>();
+        // card and terminal data as a real terminal would send them (profile: contact chip, online-capable)
         t.put("9F02", HEX.parseHex(String.format("%012d", amount)));
         t.put("9F03", new byte[6]);
         t.put("9F1A", HEX.parseHex("0818"));
-        t.put("95", new byte[5]);
+        t.put("95", HEX.parseHex(tvr));
         t.put("5F2A", HEX.parseHex("0" + currency));
         t.put("9A", HEX.parseHex(now.format(DateTimeFormatter.ofPattern("yyMMdd"))));
+        t.put("9F21", HEX.parseHex(now.format(DateTimeFormatter.ofPattern("HHmmss"))));
         t.put("9C", HEX.parseHex(pc.substring(0, 2)));
         t.put("9F37", un);
         t.put("82", HEX.parseHex("3C00"));
@@ -292,13 +297,27 @@ public class CorehostSimulator {
         t.put("9F10", HEX.parseHex(scheme == '0' ? "06010A03A00000" : "06011203A00000"));
         t.put("9F27", HEX.parseHex("80"));
         t.put("5F34", HEX.parseHex(psn));
+        t.put("84", HEX.parseHex(switch (String.valueOf(p.get("scheme"))) {
+            case "VISA" -> "A0000000031010";
+            case "MASTERCARD" -> "A0000000041010";
+            default -> "F0000000010001";     // proprietary (unregistered) RID for domestic/test products
+        }));
+        t.put("9F09", HEX.parseHex("VISA".equals(p.get("scheme")) ? "008C" : "0002"));
+        t.put("9F07", HEX.parseHex("FF00"));
+        t.put("9F33", HEX.parseHex(atm ? "6040E8" : "E0F8C8"));
+        t.put("9F35", HEX.parseHex(atm ? "14" : "22"));
+        t.put("9F34", HEX.parseHex(pinEntered ? "420300" : "1F0302"));
+        t.put("9B", HEX.parseHex("E800"));
+        t.put("9F1E", "SIMTERM1".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        t.put("9F41", HEX.parseHex("00" + ref));
         byte[] data = com.cms.emv.EmvService.dataBlockFor(t, (String) p.get("emv_data_list"));
         byte[] key = com.cms.emv.EmvCrypto.cryptogramKey(imk, com.cms.emv.EmvService.y(pan, psn), atc, scheme);
         byte[] arqc = com.cms.emv.EmvCrypto.arqc(key, data, scheme);
         if (Boolean.TRUE.equals(r.tamperArqc())) arqc[0] ^= 0x01;
         t.put("9F26", arqc);
-        chipState.put(ref, new byte[][]{key, arqc, atc});
-        return com.cms.emv.Tlv.encode(t);
+        byte[] field55 = com.cms.emv.Tlv.encode(t);
+        chipState.put(ref, new byte[][]{key, arqc, atc, field55});
+        return field55;
     }
 
     /** What the card would conclude from the answer: ARPC present and valid for the returned ARC. */
@@ -307,6 +326,9 @@ public class CorehostSimulator {
         if (st == null) return null;
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("atc", ((st[2][0] & 0xFF) << 8) | (st[2][1] & 0xFF));
+        // raw DE55 both ways, for the decoder in the console (dev simulator data only: no track-2 equivalent)
+        out.put("requestIcc", HEX.formatHex(st[3]));
+        out.put("responseIcc", resp.hasField(55) ? HEX.formatHex(resp.getBytes(55)) : null);
         byte[] iad = resp.hasField(55) ? com.cms.emv.Tlv.parse(resp.getBytes(55)).get("91") : null;
         out.put("arpcReceived", iad != null);
         if (iad != null && iad.length == 10) {

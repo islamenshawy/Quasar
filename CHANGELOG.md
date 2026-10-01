@@ -11,6 +11,7 @@ Each version lists **Migrations** (database changes applied by Flyway on start) 
 - **hsm-sim 1.1.0**: `KQ` (modes 0/1/2, schemes 0/1), test key IMK_AC_P01, self-test cases.
 - Corehost simulator: chip mode builds field 55 with an ARQC from the dev IMK-AC (card emulation, dev only) and checks the returned ARPC; console Switch simulator has a Chip (EMV) switch. Product setup: cryptogram version and data list.
 - `scripts/iso-test.sh`: chip cases I19-I22 (valid ARQC with ARPC check, chip withdrawal, wrong ARQC, replayed ATC).
+- **DE55 decoder** in the Switch simulator: request and response field 55 broken down per tag with name, description and interpretation, and bit by bit for TVR, TSI, AIP, AUC, terminal capabilities, CVM results, CID and the Visa IAD/CVR; ARPC/ARC for tag 91. "Decode any DE55" accepts pasted hex (PAN and track 2 masked). The simulated terminal now sends a realistic profile (AID, terminal type and capabilities, CVM results, TSI, AUC, IFD serial, sequence counter) and a selectable TVR scenario.
 
 ### Changed
 - HSM messages are exchanged byte for byte (ISO-8859-1 instead of US-ASCII) so binary fields pass unchanged; ASCII commands are unaffected.
