@@ -85,5 +85,5 @@ watch(filters, () => {
   reload()
 })
 
-onMounted(() => { loadReference(); reload() })
+onMounted(() => { loadReference(); reload(); if (route.query.new) dialog.value = true })
 </script>

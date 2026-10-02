@@ -1,11 +1,10 @@
 <template>
   <q-page padding class="page">
-    <PageHeader title="Dashboard" :subtitle="greeting">
-      <template #actions>
-        <q-btn v-if="can.write" outline no-caps color="primary" icon="person_add" label="New customer" @click="newCustomer = true" />
-        <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
-      </template>
-    </PageHeader>
+    <PulseHero class="q-mb-md" :eyebrow="today" :title="greeting" :approved="t.approved ?? 0" :declined="t.declined ?? 0">
+      <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
+      <q-btn v-if="can.write" outline no-caps icon="person_add" label="New customer" @click="newCustomer = true" />
+      <q-btn outline no-caps icon="receipt_long" label="Transactions" to="/transactions" />
+    </PulseHero>
 
     <div class="row q-col-gutter-md">
       <div v-for="t in tiles" :key="t.label" class="col-6 col-md-3">
@@ -25,19 +24,7 @@
     </div>
 
     <div class="row q-col-gutter-md q-mt-none">
-      <div class="col-12 col-md-4">
-        <q-card flat bordered class="full-height cursor-pointer" @click="$router.push('/transactions')">
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium">Transactions today</div>
-            <div class="row q-mt-sm">
-              <div class="col"><div class="stat-value text-positive">{{ t.approved ?? 0 }}</div><div class="stat-label">approved</div></div>
-              <div class="col"><div class="stat-value text-negative">{{ t.declined ?? 0 }}</div><div class="stat-label">declined</div></div>
-              <div class="col"><div class="stat-value">{{ approvalRate }}</div><div class="stat-label">approval rate</div></div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-      <div class="col-12 col-md-4">
+      <div class="col-12 col-md-6">
         <q-card flat bordered class="full-height">
           <q-card-section>
             <div class="text-subtitle1 text-weight-medium q-mb-sm">Approved volume today</div>
@@ -48,7 +35,7 @@
           </q-card-section>
         </q-card>
       </div>
-      <div class="col-12 col-md-4">
+      <div class="col-12 col-md-6">
         <q-card flat bordered class="full-height">
           <q-card-section>
             <div class="text-subtitle1 text-weight-medium q-mb-sm">Top decline reasons today</div>
@@ -102,7 +89,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import PageHeader from '../components/PageHeader.vue'
+import PulseHero from '../components/PulseHero.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import { api } from '../lib/api.js'
 import { can, session } from '../lib/session.js'
@@ -111,16 +98,13 @@ import { dateTime, label, money, statusColor } from '../lib/format.js'
 const d = ref({})
 const t = ref({})
 const codes = ref({})
-const approvalRate = computed(() => {
-  const n = (t.value.approved ?? 0) + (t.value.declined ?? 0)
-  return n ? Math.round(100 * t.value.approved / n) + '%' : '—'
-})
 const recent = ref([])
+const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
 const greeting = computed(() => {
   const h = new Date().getHours()
   const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
   const name = session.user?.fullName?.split(' ')[0] || session.user?.username || ''
-  return `${part}${name ? ', ' + name : ''}. Here is your portfolio today.`
+  return `${part}${name ? ', ' + name : ''}.`
 })
 const newCustomer = ref(false)
 
