@@ -134,9 +134,10 @@ const iso = reactive({ label: '…', tone: '', detail: 'Checking' })
 const coreHost = reactive({ shown: false, label: '…', tone: '', detail: 'Checking' })
 const devTools = ref(false)
 const pendingApprovals = ref(0)
+const openFraud = ref(0)
 
 const railMini = computed(() => mini.value && $q.screen.gt.sm)
-const groups = computed(() => navGroups({ devTools: devTools.value, pending: pendingApprovals.value }))
+const groups = computed(() => navGroups({ devTools: devTools.value, pending: pendingApprovals.value, fraud: openFraud.value }))
 const section = computed(() => {
   const path = route.path
   const hit = groups.value.find(g => g.items.some(i => i.to !== '/' && path.startsWith(i.to)))
@@ -155,6 +156,7 @@ function toggleMini () {
 async function checkApprovals () {
   try {
     pendingApprovals.value = (await api.get('/admin/approvals/pending-count', { quiet: true })).pending
+    openFraud.value = (await api.get('/admin/fraud/alerts/count', { quiet: true })).open
   } catch { /* signed out */ }
 }
 

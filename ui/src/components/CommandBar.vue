@@ -66,6 +66,7 @@ const actions = computed(() => [
     run: () => { $q.dark.toggle(); try { localStorage.setItem('cms.dark', String($q.dark.isActive)) } catch { /* ignore */ } },
     keys: 'theme dark light mode' },
   { label: 'Pending approvals', icon: 'how_to_reg', to: '/approvals', keys: 'maker checker approve' },
+  { label: 'Open fraud alerts', icon: 'gpp_maybe', to: '/fraud', keys: 'fraud risk alerts cases' },
   { label: 'Declined transactions', icon: 'block', to: '/transactions?result=DECLINED', keys: 'declines failed' },
   { label: 'Cards waiting for print', icon: 'print', to: '/cards?status=PENDING_PRINT', keys: 'print pending' }
 ])

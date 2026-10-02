@@ -61,6 +61,16 @@
                 </div>
               </div>
               <q-input v-if="f.channel !== 'ATM'" v-model="f.merchant" outlined dense maxlength="40" label="Merchant name / location" />
+              <div class="row q-col-gutter-sm">
+                <div class="col-6">
+                  <q-input v-model="f.mcc" outlined dense maxlength="4" label="MCC" class="mono"
+                           :hint="f.channel === 'ATM' ? 'Default 6011 (ATM)' : 'Default 5411; 7995 gambling, 4829 money transfer'" />
+                </div>
+                <div class="col-6">
+                  <q-input v-model="f.country" outlined dense maxlength="3" label="Acquirer country (field 19)" class="mono"
+                           hint="Blank = domestic; e.g. 840 US, 784 UAE" />
+                </div>
+              </div>
               <q-toggle v-model="f.chip" label="Chip (EMV): send field 55 with an ARQC" :disable="f.channel === 'ECOM'" />
               <q-select v-if="f.chip" v-model="f.tvr" :options="tvrOptions" emit-value map-options outlined dense
                         label="Terminal verification results (TVR, tag 95)">
@@ -167,7 +177,7 @@ import { label, toMinor, money as fmt } from '../lib/format.js'
 const $q = useQuasar()
 
 const typeOptions = ['BALANCE_INQUIRY', 'WITHDRAWAL', 'PURCHASE', 'PREAUTH', 'REFUND', 'PIN_CHANGE'].map(t => ({ label: label(t), value: t }))
-const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000' })
+const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000', mcc: '', country: '' })
 const tvrOptions = TVR_PRESETS
 const iccTab = ref('request')
 const pasted = ref('')
@@ -227,7 +237,8 @@ async function send () {
     amount: needsAmount.value ? toMinor(f.amount, exponent) : null,
     pin: f.pin || null, newPin: f.type === 'PIN_CHANGE' ? f.newPin : null,
     terminalId: f.terminalId || null, merchant: f.merchant || null, advice: f.advice,
-    chip: f.chip && f.channel !== 'ECOM', tamperArqc: f.chip && f.tamper, tvr: f.chip ? f.tvr : null
+    chip: f.chip && f.channel !== 'ECOM', tamperArqc: f.chip && f.tamper, tvr: f.chip ? f.tvr : null,
+    mcc: /^[0-9]{4}$/.test(f.mcc) ? f.mcc : null, country: /^[0-9]{3}$/.test(f.country) ? f.country : null
   }
   const amt = needsAmount.value ? ` ${f.amount}` : ''
   await post(body, `${label(f.type)}${amt} · ${f.channel} · ${f.card.maskedPan}`, f.type)

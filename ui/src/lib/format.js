@@ -27,6 +27,9 @@ export function date (iso) {
 export const label = code => code ? code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, ' ') : ''
 
 const COLORS = {
+  OPEN: 'warning',
+  CONFIRMED_FRAUD: 'negative',
+  FALSE_POSITIVE: 'positive',
   ACTIVE: 'positive',
   PENDING_PRINT: 'warning',
   PRINTED: 'info',

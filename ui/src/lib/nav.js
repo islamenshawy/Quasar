@@ -1,7 +1,7 @@
 // One navigation model for the orbit rail and the command bar.
 import { can } from './session.js'
 
-export function navGroups ({ devTools = false, pending = 0 } = {}) {
+export function navGroups ({ devTools = false, pending = 0, fraud = 0 } = {}) {
   const groups = [
     {
       title: 'Operations',
@@ -12,6 +12,7 @@ export function navGroups ({ devTools = false, pending = 0 } = {}) {
         { to: '/accounts', label: 'Accounts', icon: 'account_balance', keys: 'balances' },
         { to: '/cards', label: 'Cards', icon: 'credit_card', keys: 'pan' },
         { to: '/transactions', label: 'Transactions', icon: 'receipt_long', keys: 'iso authorisations' },
+        { to: '/fraud', label: 'Fraud alerts', icon: 'gpp_maybe', badge: fraud || null, keys: 'risk cases suspicious' },
         { to: '/approvals', label: 'Approvals', icon: 'how_to_reg', badge: pending || null, keys: 'maker checker pending' }
       ]
     },
@@ -22,7 +23,8 @@ export function navGroups ({ devTools = false, pending = 0 } = {}) {
         { to: '/setup/account-types', label: 'Account types', icon: 'category' },
         { to: '/setup/segments', label: 'Customer segments', icon: 'diversity_3' },
         { to: '/setup/currencies', label: 'Currencies', icon: 'payments' },
-        { to: '/setup/numbering', label: 'Numbering & settings', icon: 'pin', keys: 'sequence cif settings' }
+        { to: '/setup/fraud-rules', label: 'Fraud rules', icon: 'shield', keys: 'risk velocity mcc country score' },
+        { to: '/setup/numbering', label: 'Numbering & settings', icon: 'pin', keys: 'sequence cif settings country' }
       ]
     },
     {
