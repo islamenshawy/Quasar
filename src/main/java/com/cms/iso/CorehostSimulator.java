@@ -50,7 +50,8 @@ public class CorehostSimulator {
     public record SimRequest(String type, String channel, Long cardId, String pan, String pin, String newPin,
                              Long amount, String currency, String terminalId, String acquirerId, String mcc,
                              String merchant, String originalRef, Long amountCompleted, Boolean advice,
-                             Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc, String tvr) {}
+                             Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc, String tvr,
+                             String country) {}
 
     public record SimResult(String ref, String mti, Map<String, String> request, Map<String, String> response,
                             String actionCode, String actionText, boolean approved, Long ledgerBalance,
@@ -158,6 +159,7 @@ public class CorehostSimulator {
         m.set(22, channel.equals("ECOM") ? "100010000000" : "210101210000");
         m.set(26, r.mcc() != null ? r.mcc() : channel.equals("ATM") ? "6011" : "5411");
         m.set(32, acquirer);
+        if (r.country() != null && r.country().matches("[0-9]{3}")) m.set(19, r.country());
         m.set(37, now.format(DateTimeFormatter.ofPattern("yyDDD")) + String.format("%07d", Integer.parseInt(s)));
         m.set(41, terminal);
         m.set(42, pad("CMSSIM" + terminal, 15));

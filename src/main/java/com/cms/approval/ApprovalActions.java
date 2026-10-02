@@ -9,6 +9,7 @@ import com.cms.card.IssuanceException;
 import com.cms.common.AuditLog;
 import com.cms.common.Settings;
 import com.cms.core.CoreSafService;
+import com.cms.fraud.FraudService;
 import com.cms.customer.CustomerService;
 import com.cms.ledger.LedgerService;
 import com.cms.reference.ReferenceDataService;
@@ -40,11 +41,13 @@ public class ApprovalActions {
     public record CardReplace(long cardId, String reason, boolean samePan, String embossingName, String branchId) {}
     public record BatchJobUpdate(String code, String cron, boolean enabled) {}
     public record SafCancel(long id, String reason) {}
+    public record FraudRuleSave(String code, boolean create, FraudService.Rule rule) {}
+    public record AlertResolve(long id, FraudService.Resolution resolution) {}
 
     public ApprovalActions(ApprovalService approvals, ReferenceDataService ref, Settings settings,
                            LedgerService ledger, CardAdminService cards, CustomerService customers,
                            AccountService accounts, AuditLog audit, CardIssuanceService issuance, BatchService batch,
-                           CoreSafService saf) {
+                           CoreSafService saf, FraudService fraud) {
         approvals.register("CURRENCY_SAVE", CurrencySave.class, (p, op) -> ref.saveCurrency(p.code(), p.data(), p.create(), op));
         approvals.register("SEGMENT_SAVE", SegmentSave.class, (p, op) -> ref.saveSegment(p.code(), p.data(), p.create(), op));
         approvals.register("ACCOUNT_TYPE_SAVE", AccountTypeSave.class, (p, op) -> ref.saveAccountType(p.code(), p.data(), p.create(), op));
@@ -81,5 +84,7 @@ public class ApprovalActions {
                 p.samePan(), p.embossingName(), p.branchId(), "REPLACEMENT", op));
         approvals.register("BATCH_JOB_UPDATE", BatchJobUpdate.class, (p, op) -> batch.update(p.code(), p.cron(), p.enabled(), op));
         approvals.register("CORE_SAF_CANCEL", SafCancel.class, (p, op) -> saf.cancel(p.id(), p.reason(), op));
+        approvals.register("FRAUD_RULE_SAVE", FraudRuleSave.class, (p, op) -> fraud.saveRule(p.code(), p.create(), p.rule(), op));
+        approvals.register("FRAUD_ALERT_RESOLVE", AlertResolve.class, (p, op) -> fraud.resolve(p.id(), p.resolution(), op));
     }
 }

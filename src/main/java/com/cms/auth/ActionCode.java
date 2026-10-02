@@ -12,6 +12,7 @@ public final class ActionCode {
 
     public static final String APPROVED = "000";
     public static final String DO_NOT_HONOUR = "100";
+    public static final String SUSPECTED_FRAUD = "102";
     public static final String EXPIRED_CARD = "101";
     public static final String RESTRICTED_CARD = "104";
     public static final String PIN_TRIES_EXCEEDED = "106";
@@ -39,6 +40,7 @@ public final class ActionCode {
     private static final Map<String, String> TEXT = Map.ofEntries(
             Map.entry(APPROVED, "Approved"),
             Map.entry(DO_NOT_HONOUR, "Do not honour"),
+            Map.entry(SUSPECTED_FRAUD, "Suspected fraud"),
             Map.entry(EXPIRED_CARD, "Expired card"),
             Map.entry(RESTRICTED_CARD, "Restricted card"),
             Map.entry(PIN_TRIES_EXCEEDED, "Allowable PIN tries exceeded"),

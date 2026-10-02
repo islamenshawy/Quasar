@@ -88,7 +88,8 @@ public final class IsoMapper {
                 amount(m, type),
                 m.getString(49), m.getString(11), m.getString(37), m.getString(7), m.getString(12),
                 m.getString(32), trim(m.getString(41)), mcc, trim(m.getString(43)), advice, original, completed,
-                m.hasField(55) ? ISOUtil.hexString(m.getBytes(55)) : null);
+                m.hasField(55) ? ISOUtil.hexString(m.getBytes(55)) : null,
+                blankToNull(m.getString(19)));
     }
 
     /** Response to a financial / authorization / reversal message: echoes the keys, adds 38, 39, 54. */

@@ -26,6 +26,7 @@
   <isofield id="14"  length="4"   name="DATE, EXPIRATION"                  class="org.jpos.iso.IFA_NUMERIC"/>
   <isofield id="15"  length="6"   name="DATE, SETTLEMENT"                  class="org.jpos.iso.IFA_NUMERIC"/>
   <isofield id="18"  length="4"   name="MERCHANT TYPE"                     class="org.jpos.iso.IFA_NUMERIC"/>
+  <isofield id="19"  length="3"   name="ACQUIRING INSTITUTION COUNTRY CODE" class="org.jpos.iso.IFA_NUMERIC"/>
   <isofield id="22"  length="12"  name="POINT OF SERVICE DATA CODE"        class="org.jpos.iso.IF_CHAR"/>
   <isofield id="23"  length="3"   name="CARD SEQUENCE NUMBER"              class="org.jpos.iso.IFA_NUMERIC"/>
   <isofield id="24"  length="3"   name="FUNCTION CODE"                     class="org.jpos.iso.IFA_NUMERIC"/>

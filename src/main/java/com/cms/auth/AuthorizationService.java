@@ -6,6 +6,7 @@ import com.cms.core.CoreBankingClient.Posting;
 import com.cms.core.CoreSafService;
 import com.cms.core.CoreSafService.SafPayload;
 import com.cms.emv.EmvService;
+import com.cms.fraud.FraudService;
 import com.cms.card.Luhn;
 import com.cms.hsm.HsmException;
 import com.cms.hsm.PayShieldClient;
@@ -26,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -62,12 +64,13 @@ public class AuthorizationService {
     private final EmvService emvService;
     private final CoreBankingClient core;
     private final CoreSafService saf;
+    private final FraudService fraud;
     private final String acquirerZpkName;
     private final PinBlockFormat pinBlockFormat;
 
     public AuthorizationService(JdbcTemplate jdbc, PlatformTransactionManager txm, PanCrypto panCrypto,
                                 PinService pins, PayShieldClient hsm, KeyRepository keys, LedgerService ledger,
-                                EmvService emvService, CoreBankingClient core, CoreSafService saf,
+                                EmvService emvService, CoreBankingClient core, CoreSafService saf, FraudService fraud,
                                 @Value("${cms.keys.corehost-zpk-name}") String acquirerZpkName,
                                 @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -80,6 +83,7 @@ public class AuthorizationService {
         this.emvService = emvService;
         this.core = core;
         this.saf = saf;
+        this.fraud = fraud;
         this.acquirerZpkName = acquirerZpkName;
         this.pinBlockFormat = pinBlockFormat;
     }
@@ -155,6 +159,8 @@ public class AuthorizationService {
             d = verifyPin(r, c);
             if (d != null) return finish(txnId, d, d.equals(PIN_TRIES_EXCEEDED) ? "PIN tries exhausted" : "wrong PIN", c);
         }
+        AuthResponse fraudStop = screen(r, c, txnId, false);
+        if (fraudStop != null) return fraudStop;
 
         return switch (r.type()) {
             case BALANCE_INQUIRY -> balanceInquiry(r, c, txnId);
@@ -164,6 +170,26 @@ public class AuthorizationService {
             case REFUND -> refund(r, c, txnId);
             case REVERSAL -> throw new IllegalStateException("handled above");
         };
+    }
+
+    /**
+     * Fraud and risk rules (CMS-095). Refunds and reversals are not screened; a card on a fraud exemption (false
+     * positive confirmed by the fraud desk) neither. adviceOnly: score and alert, never decline.
+     */
+    private AuthResponse screen(AuthRequest r, Ctx c, long txnId, boolean adviceOnly) {
+        if (r.type() == TxnType.REFUND || r.type() == TxnType.REVERSAL) return null;
+        if (c.fraudExemptUntil != null && c.fraudExemptUntil.isAfter(OffsetDateTime.now())) return null;
+        FraudService.Verdict v = fraud.evaluate(new FraudService.Screened(txnId, c.cardId, c.productCode, c.cardCreatedAt,
+                r.type().name(), r.channel().name(), r.amount(), r.merchantType(), r.acquirerCountry()), adviceOnly);
+        if (!v.declines()) return null;
+        if (v.blocks() && "ACTIVE".equals(c.status)) {
+            jdbc.update("UPDATE card SET status = 'BLOCKED', version = version + 1 WHERE id = ?", c.cardId);
+            jdbc.update("""
+                    INSERT INTO card_status_history (card_id, old_status, new_status, reason, changed_by)
+                    VALUES (?, 'ACTIVE', 'BLOCKED', ?, ?)
+                    """, c.cardId, clip("fraud rules " + String.join(",", v.rules())), SYSTEM_ACTOR);
+        }
+        return finish(txnId, SUSPECTED_FRAUD, "fraud rules " + String.join(",", v.rules()) + " (score " + v.score() + ")", c);
     }
 
     // ---------------- checks ----------------
@@ -419,6 +445,7 @@ public class AuthorizationService {
      * without status, PIN, limit or funds checks. The balance may go negative.
      */
     private AuthResponse advice(AuthRequest r, Ctx c, long txnId) {
+        screen(r, c, txnId, true);
         if (hasAmount(r.type()) && !c.currencyNumeric.equals(r.currencyNumeric())) {
             // no FX in the CMS: acknowledge so the switch stops repeating, book nothing, flag for operations
             return finish(txnId, APPROVED, "NOT POSTED: advice currency " + r.currencyNumeric()
@@ -605,12 +632,12 @@ public class AuthorizationService {
         return jdbc.queryForObject("""
                 INSERT INTO iso_transaction (mti, processing_code, stan, rrn, transmission_dt, local_dt, acquirer_id,
                     terminal_id, pan_last4, txn_type, amount, currency_code, channel, is_advice, merchant_type,
-                    card_acceptor, original_key, raw_request_masked)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                    card_acceptor, original_key, raw_request_masked, acquirer_country)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """, Long.class, r.mti(), r.processingCode(), r.stan(), r.rrn(), r.transmissionDt(), r.localDt(),
                 r.acquirerId(), r.terminalId(), last4, r.type().name(), r.amount(), currency, r.channel().name(),
                 r.advice(), r.merchantType(), r.cardAcceptor(), r.original() == null ? null : r.original().key(),
-                r.toString());
+                r.toString(), r.acquirerCountry() != null && r.acquirerCountry().matches("\\d{3}") ? r.acquirerCountry() : null);
     }
 
     private AuthResponse approve(long txnId, Ctx c, long fee, UUID journal) {
@@ -787,6 +814,8 @@ public class AuthorizationService {
         Integer lastAtc;
         String accountNumber;
         long stipLimit;
+        String productCode;
+        OffsetDateTime cardCreatedAt, fraudExemptUntil;
     }
 
     private static final String CTX_SELECT = """
@@ -800,7 +829,7 @@ public class AuthorizationService {
                    p.wd_fee, p.bi_fee, p.atm_enabled, p.pos_enabled, p.ecom_enabled,
                    k.atm_enabled, k.pos_enabled, k.ecom_enabled, p.verify_cvv,
                    k.psn, p.imk_ac_key_name, p.emv_scheme, p.emv_data_list, k.last_atc,
-                   a.account_number, p.core_stip_limit
+                   a.account_number, p.core_stip_limit, p.code, k.created_at, k.fraud_exempt_until
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN account a      ON a.id = k.account_id
@@ -876,6 +905,9 @@ public class AuthorizationService {
         c.lastAtc = (Integer) rs.getObject(37);
         c.accountNumber = rs.getString(38);
         c.stipLimit = rs.getLong(39);
+        c.productCode = rs.getString(40);
+        c.cardCreatedAt = rs.getObject(41, OffsetDateTime.class);
+        c.fraudExemptUntil = rs.getObject(42, OffsetDateTime.class);
         return c;
     }
 
