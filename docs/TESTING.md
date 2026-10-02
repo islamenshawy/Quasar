@@ -164,6 +164,21 @@ Test rules use fixed codes `TEST_*`, scoped to product P01, and are switched off
 | F20 | Paused card passes the blocking rule | 000 |
 | F21-F23 | Confirm fraud as LOST; other open alerts closed; resolve twice | LOST, 0 open, INVALID_STATUS |
 
+## 3g. Fees and FX catalogue (`scripts/fees-test.sh`)
+
+Plan `TEST_FEES`, product `PFEE` (BIN 999998, SAVINGS × MASS) and rate USD/EGP 48.5 are created or updated on each run.
+
+| ID | Case | Expected |
+|---|---|---|
+| E00-E03 | Plan, rate and product changes need a second supervisor | approvalPending, APPROVED; product on TEST_FEES, FX on |
+| E04 | Card issued on a funded account | issuance fee 20.00 charged |
+| E05-E08 | Balance inquiry fee; first withdrawal free; second pays 5.00; reversal returns the fee | balances 979.00, 879.00, 774.00, 879.00 |
+| E09-E10 | Domestic purchase; international purchase (country 840) | no fee; 1% fee |
+| E11-E13 | USD 10.00 purchase: EGP 485.00 + FX 3% + intl 1%; transaction record; full reversal | 504.40 debited; billing 48500, rate 48.5, FX fee 1455; all returned |
+| E14 | AED purchase without a rate | 119 "no FX rate AED/EGP" |
+| E15-E17 | FEE_PERIODIC twice: monthly fee after the first day; annual fee on the anniversary | each charged once |
+| E18-E19 | Replacement fee; card fee history | 15.00; ANNUAL, ISSUANCE, MONTHLY |
+
 ## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |
