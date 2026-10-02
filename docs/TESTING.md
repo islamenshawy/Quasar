@@ -179,6 +179,22 @@ Plan `TEST_FEES`, product `PFEE` (BIN 999998, SAVINGS × MASS) and rate USD/EGP 
 | E15-E17 | FEE_PERIODIC twice: monthly fee after the first day; annual fee on the anniversary | each charged once |
 | E18-E19 | Replacement fee; card fee history | 15.00; ANNUAL, ISSUANCE, MONTHLY |
 
+## 3h. Notifications and OTP catalogue (`scripts/notify-test.sh`)
+
+Uses the DEV LOG provider and its sink (`/api/dev/notifications/sink`); the dispatcher is triggered with `/api/dev/notifications/dispatch`.
+
+| ID | Case | Expected |
+|---|---|---|
+| N00 | Starting templates | TXN_APPROVED SMS in EN and AR |
+| N01-N04 | Card issued, sent, text, activated | CARD_ISSUED SMS, SENT, name + last 4 only, CARD_ACTIVATED |
+| N05-N06 | Withdrawal approved; insufficient funds | amount and balance; TXN_DECLINED with reason |
+| N07-N10 | Preferences SMS+e-mail, Arabic, minimum 500.00; below / above the minimum; alerts off | nothing; Arabic SMS + e-mail; nothing |
+| N11-N12 | PIN blocked; operator unblocks | CARD_STATUS even with alerts off |
+| N13-N14 | Gateway failing; resend after recovery | PENDING with attempt and error; SENT |
+| N15-N21 | OTP send (masked mobile), wrong code, right code, reuse, redaction, lock after 3, rate limit | 2 tries left, VERIFIED, false, ******, LOCKED, LIMIT_REACHED |
+| N22 | Channel API with a wrong key | 401 |
+| N23-N25 | Template change needs approval; OTP text without {{code}} | APPROVED; INVALID_REQUEST |
+
 ## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |

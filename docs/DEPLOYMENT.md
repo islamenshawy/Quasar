@@ -133,6 +133,8 @@ The CMS reads configuration from `application.yml`, from the active profile file
 | `CMS_DEV_PASSWORD` | no | `Dev-Passw0rd!` | DEV only: password of the dev users admin, supervisor, supervisor2, operator, viewer |
 | `CMS_CORE_BANKING_URL` | for core accounts | dev: in-process simulator | Base URL of the core banking funds API (provisional contract, IN-06). Empty = not connected: cards on `CORE_BANKING` accounts approve only within their stand-in limit |
 | `CMS_CORE_BANKING_API_KEY` / `CMS_CORE_BANKING_TIMEOUT_MS` | no | `dev-core-key` / `3000` | Sent as `X-Api-Key`; timeout per call (the switch waits for the answer, keep it well under the switch timeout) |
+| `CMS_SMS_PROVIDER` / `CMS_SMS_URL` / `CMS_SMS_API_KEY` / `CMS_SMS_SENDER` | for SMS | `HTTP` (dev `LOG`) | SMS gateway (provisional HTTP contract, IN-07). `LOG` sends nothing |
+| `CMS_EMAIL_PROVIDER` / `CMS_EMAIL_URL` / `CMS_EMAIL_API_KEY` / `CMS_EMAIL_SENDER` | for e-mail | `HTTP` (dev `LOG`) | E-mail gateway, same contract |
 | `CMS_CHANNEL_API_KEY` | no | `dev-channel-key` | Key for `/api/channel/**` (ACS, mobile, IVR). Empty = refused |
 | `CMS_ISO_PORT` / `CMS_ISO_ENABLED` | no | `7000` / `true` | BASE24 switch interface. Also `cms.iso.length-prefix` (BINARY2 / ASCII4) and `cms.iso.header-length`; set them from the BASE24 spec |
 
@@ -280,6 +282,7 @@ Run these checks in order. Each must pass before moving to the next.
 | 5e | Core banking (DEV only) | `./scripts/core-test.sh` | `25 passed, 0 failed` |
 | 5f | Fraud rules (DEV only) | `./scripts/fraud-test.sh` | `24 passed, 0 failed` |
 | 5g | Fees and FX (DEV only) | `./scripts/fees-test.sh` | `20 passed, 0 failed` |
+| 5h | Notifications and OTP (DEV only) | `./scripts/notify-test.sh` | `26 passed, 0 failed` |
 | 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
 If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
@@ -418,6 +421,7 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 - **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
 - **V6 (users, roles, maker-checker):** on the first start after upgrading, the CMS creates `admin` (see §6.2). Give Dexxis the API key (`CMS_DEXXIS_API_KEY`) **before** upgrading, or perso and activation calls fail with 401. Update any script that called the admin API to sign in (HTTP Basic) and to handle 202 approval responses.
 - **V7 (card lifecycle, batch):** the batch scheduler starts with the CMS. Review **Control → Batch jobs** after the upgrade: CARD_RENEWAL will create renewal cards for every live card expiring within its product's lead days (default 30) at 01:00, and STALE_PENDING_PRINT cancels cards not printed within 30 days. Switch a job off, or change the product settings, before the first night if that is not wanted. To stop all scheduled runs on an instance set `cms.batch.scheduler-enabled=false`.
+- **V12 (notifications):** messages start being queued at once (customers with a mobile number get SMS by default). Until the SMS / e-mail gateway is connected, set `CMS_SMS_PROVIDER=LOG` and `CMS_EMAIL_PROVIDER=LOG`, otherwise messages retry and end FAILED. Review Setup → Message templates (English and Arabic) before going live.
 - **V11 (fees, FX):** products with ATM fees get a plan `FP_<product>` with the same amounts, so card charges do not change. Review the plans under Setup → Fee plans before adding issuance, monthly or annual fees (the FEE_PERIODIC job runs daily at 02:00). To accept foreign currency, enter rates under Setup → FX rates and switch "Accept other currencies" on the product; until then such transactions decline 119 as before.
 - **V10 (fraud):** nothing changes until rules are switched on: the seven starter rules are installed inactive. Check `institution.country` (default 818) under Setup → Numbering & settings, agree thresholds with the fraud team, then activate rules one by one and watch Operations → Fraud alerts. The BASE24 packager now maps field 19 (acquirer country, provisional with IN-01).
 - **V9 (core banking):** no change for existing accounts (all `CMS_LEDGER`). To use core banking accounts, set `CMS_CORE_BANKING_URL` (and key), create an account type with ledger mode `CORE_BANKING`, and set each product's stand-in limit. Watch Control → Core banking for failed postings. On DEV, rerun `scripts/seed-dev.sql` (adds `CORE_CURRENT`).
