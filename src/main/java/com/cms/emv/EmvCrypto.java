@@ -47,6 +47,22 @@ public final class EmvCrypto {
         return des(k1, des(k2, h, false), true);
     }
 
+    /**
+     * Issuer script MAC (secure messaging for integrity), as the card checks it: card key for scheme '0',
+     * else the session key derived from the ARQC (EMV Book 2 A1.3, R = AC); MAC algorithm 3, padding method 2,
+     * leftmost 4 bytes. Mirrors hsm-sim KU.
+     */
+    public static byte[] scriptMac(byte[] imkSmi, byte[] y, byte[] arqc, char scheme, byte[] data) {
+        byte[] key = udk(imkSmi, y);
+        if (scheme != '0') {
+            byte[] l = arqc.clone(), r = arqc.clone();
+            l[2] = (byte) 0xF0;
+            r[2] = 0x0F;
+            key = parity(concat(tdes(key, l), tdes(key, r)));
+        }
+        return Arrays.copyOf(arqc(key, data, '1'), 4);
+    }
+
     public static byte[] arpc(byte[] key, byte[] arqc, byte[] arc) {
         byte[] x = Arrays.copyOf(arqc, 8);
         x[0] ^= arc[0];

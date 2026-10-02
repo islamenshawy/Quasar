@@ -12,6 +12,32 @@ public final class Tlv {
 
     private Tlv() {}
 
+    /** Top-level objects in order, repeated tags kept (e.g. several issuer script templates 72). */
+    public static java.util.List<Map.Entry<String, byte[]>> parseList(byte[] data) {
+        java.util.List<Map.Entry<String, byte[]>> out = new java.util.ArrayList<>();
+        int i = 0;
+        while (i < data.length) {
+            int start = i;
+            if (data[i] == 0x00 || data[i] == (byte) 0xFF) { i++; continue; }
+            if ((data[i++] & 0x1F) == 0x1F) {
+                while (i < data.length && (data[i] & 0x80) != 0) i++;
+                i++;
+            }
+            String tag = HEX.formatHex(data, start, i);
+            int len = data[i++] & 0xFF;
+            if (len > 0x80) {
+                int n = len & 0x7F;
+                len = 0;
+                for (int k = 0; k < n; k++) len = (len << 8) | (data[i++] & 0xFF);
+            }
+            byte[] v = new byte[len];
+            System.arraycopy(data, i, v, 0, len);
+            out.add(Map.entry(tag, v));
+            i += len;
+        }
+        return out;
+    }
+
     /** Tag (upper-case hex) -> value, in order of appearance. Later duplicates overwrite earlier ones. */
     public static Map<String, byte[]> parse(byte[] data) {
         Map<String, byte[]> out = new LinkedHashMap<>();
@@ -40,6 +66,11 @@ public final class Tlv {
             i += len;
         }
         return out;
+    }
+
+    /** One TLV object (repeated tags, e.g. several issuer script templates, are concatenated by the caller). */
+    public static byte[] encodeOne(String tag, byte[] value) {
+        return encode(Map.of(tag, value));
     }
 
     public static byte[] encode(Map<String, byte[]> tags) {

@@ -160,6 +160,21 @@ public final class PayShieldClient implements AutoCloseable {
         return d.substring(0, 8).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
     }
 
+    // ------------------------------------------------------------------
+    // KU - issuer script MAC (EMV secure messaging, integrity), CMS-110.
+    // Request : KU + mode('0' MAC) + scheme(1) + MK-SMI + Y(8B) + ATC(2B) + ARQC(8B) + data length(2H) + data(nB)
+    //           data = command header || ATC || ARQC || command data (the full MAC input)
+    // Response: KV + err + MAC(4B)
+    // PROVISIONAL layout (with KQ under IN-03): confirm against the Host Command Reference for your firmware.
+    // ------------------------------------------------------------------
+    public byte[] issuerScriptMac(String mkSmi, char scheme, byte[] y, byte[] atc, byte[] arqc, byte[] data) {
+        if (data.length > 255) throw new IllegalArgumentException("script data too long");
+        java.nio.charset.Charset bin = java.nio.charset.StandardCharsets.ISO_8859_1;
+        String d = call("KU", "0" + scheme + mkSmi + new String(y, bin) + new String(atc, bin) + new String(arqc, bin)
+                + String.format("%02X", data.length) + new String(data, bin));
+        return d.substring(0, 4).getBytes(bin);
+    }
+
     private static String kqBody(char mode, char scheme, String mkAc, byte[] y, byte[] atc, byte[] un, byte[] data,
                                  byte[] arqc, byte[] arc) {
         if (data.length > 255) throw new IllegalArgumentException("EMV data block too long");

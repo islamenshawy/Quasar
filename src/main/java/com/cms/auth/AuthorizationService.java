@@ -7,6 +7,7 @@ import com.cms.core.CoreSafService;
 import com.cms.core.CoreSafService.SafPayload;
 import com.cms.common.Settings;
 import com.cms.emv.EmvService;
+import com.cms.emv.IssuerScriptService;
 import com.cms.fee.FeeService;
 import com.cms.fraud.FraudService;
 import com.cms.notify.NotificationService;
@@ -72,6 +73,7 @@ public class AuthorizationService {
     private final FraudService fraud;
     private final FeeService fees;
     private final NotificationService notifications;
+    private final IssuerScriptService scripts;
     private final Settings settings;
     private final String acquirerZpkName;
     private final PinBlockFormat pinBlockFormat;
@@ -79,7 +81,7 @@ public class AuthorizationService {
     public AuthorizationService(JdbcTemplate jdbc, PlatformTransactionManager txm, PanCrypto panCrypto,
                                 PinService pins, PayShieldClient hsm, KeyRepository keys, LedgerService ledger,
                                 EmvService emvService, CoreBankingClient core, CoreSafService saf, FraudService fraud, FeeService fees, Settings settings,
-                                NotificationService notifications,
+                                NotificationService notifications, IssuerScriptService scripts,
                                 @Value("${cms.keys.corehost-zpk-name}") String acquirerZpkName,
                                 @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -95,6 +97,7 @@ public class AuthorizationService {
         this.fraud = fraud;
         this.fees = fees;
         this.notifications = notifications;
+        this.scripts = scripts;
         this.settings = settings;
         this.acquirerZpkName = acquirerZpkName;
         this.pinBlockFormat = pinBlockFormat;
@@ -152,6 +155,8 @@ public class AuthorizationService {
 
         d = checkTrackData(r, c);
         if (d != null) return finish(txnId, d, "track data / CVV mismatch", c);
+        d = checkCvv2(r, c);
+        if (d != null) return finish(txnId, SUSPECTED_COUNTERFEIT, d, c);
 
         EmvService.Check emv = null;
         if (r.iccData() != null && !r.iccData().isBlank() && c.imkName != null) {
@@ -163,15 +168,21 @@ public class AuthorizationService {
                 return replay.withIcc(emvService.responseTlv(emv, false));
             }
             jdbc.update("UPDATE card SET last_atc = ? WHERE id = ?", emv.atc(), c.cardId);
+            scripts.results(c.cardId, EmvService.scriptResults(r.iccData()), txnId);
         }
         AuthResponse resp = decide(r, c, txnId);
         notifyOutcome(r, c, txnId, resp);
-        return emv == null ? resp : resp.withIcc(emvService.responseTlv(emv, resp.approved()));
+        if ("CONTACTLESS".equals(r.entryMode()) && !r.hasPin() && resp.approved() && hasAmount(r.type())) {
+            jdbc.update("UPDATE card SET contactless_no_cvm_total = contactless_no_cvm_total + ? WHERE id = ?", c.amt, c.cardId);
+        }
+        return emv == null ? resp : resp.withIcc(emvService.responseTlv(emv, resp.approved(), deliverScripts(c, emv, txnId)));
     }
 
     /** PIN, then the transaction itself. */
     private AuthResponse decide(AuthRequest r, Ctx c, long txnId) {
-        String d;
+        String d = checkContactless(r, c);
+        if (d != null) return finish(txnId, d, EXCEEDS_AMOUNT_LIMIT.equals(d) ? "over the contactless limit"
+                : PIN_REQUIRED.equals(d) ? "contactless above the no-PIN limit: PIN needed" : "contactless not enabled", c);
         boolean pinRequired = r.channel() == Channel.ATM;
         if (pinRequired && !r.hasPin()) return finish(txnId, PIN_REQUIRED, "no PIN block", c);
         if (r.hasPin()) {
@@ -356,11 +367,56 @@ public class AuthorizationService {
             // Discretionary data layout PVKI(1) + 0000 + CVV(3) matches the perso placeholder (IN-04).
             if (t.discretionary().length() < 8) return SUSPECTED_COUNTERFEIT;
             String cvv = t.discretionary().substring(5, 8);
-            boolean ok = hsm.verifyCvv(keys.requireActiveKey(c.cvkName), cvv, r.pan(), c.expiry, t.serviceCode())
-                    || hsm.verifyCvv(keys.requireActiveKey(c.cvkName), cvv, r.pan(), c.expiry, "999"); // iCVV (chip)
+            // a chip read must carry the iCVV (service code 999) and a magstripe read the CVV1: chip data copied to a
+            // magstripe (or the reverse) fails. Unknown entry mode: either is accepted.
+            String cvk = keys.requireActiveKey(c.cvkName);
+            String mode = r.entryMode();
+            boolean ok = "CHIP".equals(mode) || "CONTACTLESS".equals(mode) ? hsm.verifyCvv(cvk, cvv, r.pan(), c.expiry, "999")
+                    : "MAGSTRIPE".equals(mode) ? hsm.verifyCvv(cvk, cvv, r.pan(), c.expiry, t.serviceCode())
+                    : hsm.verifyCvv(cvk, cvv, r.pan(), c.expiry, t.serviceCode()) || hsm.verifyCvv(cvk, cvv, r.pan(), c.expiry, "999");
             if (!ok) return SUSPECTED_COUNTERFEIT;
         }
         return null;
+    }
+
+    /** Card-not-present: the CVV2 (service code 000) when sent, and required when the product says so. */
+    private String checkCvv2(AuthRequest r, Ctx c) {
+        if (r.channel() != Channel.ECOM) return null;
+        if (r.cvv2() == null || r.cvv2().isBlank()) return c.verifyCvv2 ? "CVV2 required" : null;
+        if (!r.cvv2().matches("[0-9]{3,4}")) return "CVV2 format";
+        return hsm.verifyCvv(keys.requireActiveKey(c.cvkName), r.cvv2(), r.pan(), c.expiry, "000") ? null : "CVV2 mismatch";
+    }
+
+    /** Contactless (CMS-110): product and card switch, per-tap limit, no-PIN limit and cumulative no-PIN spend. */
+    private String checkContactless(AuthRequest r, Ctx c) {
+        if (!"CONTACTLESS".equals(r.entryMode()) || !hasAmount(r.type())) return null;
+        if (!c.contactlessEnabled) return NOT_PERMITTED_CARDHOLDER;
+        if (c.ctlsTxnLimit != null && c.amt > c.ctlsTxnLimit) return EXCEEDS_AMOUNT_LIMIT;
+        if (!r.hasPin()) {
+            if (c.ctlsCvmLimit != null && c.amt > c.ctlsCvmLimit) return PIN_REQUIRED;
+            if (c.ctlsCumulativeLimit != null && c.noCvmTotal + c.amt > c.ctlsCumulativeLimit) return PIN_REQUIRED;
+        }
+        return null;
+    }
+
+    /**
+     * Issuer scripts due for the card, MAC'd for this transaction (CMS-110). A failure here never fails the
+     * payment: the scripts stay queued for the next chip transaction.
+     */
+    private List<byte[]> deliverScripts(Ctx c, EmvService.Check emv, long txnId) {
+        if (c.imkSmiName == null || !emv.ok()) return List.of();
+        List<byte[]> out = new java.util.ArrayList<>();
+        try {
+            for (IssuerScriptService.Script s : scripts.due(c.cardId)) {
+                byte[] t = emvService.scriptTemplate(emv, c.imkSmiName, s.command(), s.value(), s.scriptId());
+                scripts.sent(s.id(), java.util.HexFormat.of().withUpperCase().formatHex(t), txnId);
+                out.add(t);
+            }
+        } catch (RuntimeException e) {
+            log.warn("Issuer scripts for card {} not sent: {}", c.cardId, e.getMessage());
+            return List.of();
+        }
+        return out;
     }
 
     /** Verifies the PIN; wrong PINs count towards the product limit and block the PIN when reached. */
@@ -369,7 +425,9 @@ public class AuthorizationService {
         boolean ok = pins.verifyPin(keys.requireActiveKey(acquirerZpkName), keys.requireActiveKey(c.pvkName),
                 c.pvki.charAt(0), c.pvv, r.pinBlock(), pinBlockFormat, r.pan());
         if (ok) {
-            if (c.pinTries > 0) jdbc.update("UPDATE card SET pin_tries = 0 WHERE id = ?", c.cardId);
+            if (c.pinTries > 0 || c.noCvmTotal > 0) {
+                jdbc.update("UPDATE card SET pin_tries = 0, contactless_no_cvm_total = 0 WHERE id = ?", c.cardId);
+            }
             return null;
         }
         int tries = c.pinTries + 1;
@@ -748,12 +806,13 @@ public class AuthorizationService {
         return jdbc.queryForObject("""
                 INSERT INTO iso_transaction (mti, processing_code, stan, rrn, transmission_dt, local_dt, acquirer_id,
                     terminal_id, pan_last4, txn_type, amount, currency_code, channel, is_advice, merchant_type,
-                    card_acceptor, original_key, raw_request_masked, acquirer_country)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                    card_acceptor, original_key, raw_request_masked, acquirer_country, entry_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """, Long.class, r.mti(), r.processingCode(), r.stan(), r.rrn(), r.transmissionDt(), r.localDt(),
                 r.acquirerId(), r.terminalId(), last4, r.type().name(), r.amount(), currency, r.channel().name(),
                 r.advice(), r.merchantType(), r.cardAcceptor(), r.original() == null ? null : r.original().key(),
-                r.toString(), r.acquirerCountry() != null && r.acquirerCountry().matches("\\d{3}") ? r.acquirerCountry() : null);
+                r.toString(), r.acquirerCountry() != null && r.acquirerCountry().matches("\\d{3}") ? r.acquirerCountry() : null,
+                r.entryMode() != null && r.entryMode().matches("[A-Z]{3,12}") ? r.entryMode() : null);
     }
 
     private AuthResponse approve(long txnId, Ctx c, long fee, UUID journal) {
@@ -939,6 +998,10 @@ public class AuthorizationService {
         long amt, fee, fxFee;
         BigDecimal fxRate;
         boolean international, noRate, fraudAlerted;
+        String imkSmiName;
+        boolean contactlessEnabled, verifyCvv2;
+        Long ctlsTxnLimit, ctlsCvmLimit, ctlsCumulativeLimit;
+        long noCvmTotal;
     }
 
     private static final String CTX_SELECT = """
@@ -953,7 +1016,9 @@ public class AuthorizationService {
                    k.atm_enabled, k.pos_enabled, k.ecom_enabled, p.verify_cvv,
                    k.psn, p.imk_ac_key_name, p.emv_scheme, p.emv_data_list, k.last_atc,
                    a.account_number, p.core_stip_limit, p.code, k.created_at, k.fraud_exempt_until,
-                   p.fee_plan_code, p.fx_allowed
+                   p.fee_plan_code, p.fx_allowed, p.imk_smi_key_name, p.contactless_enabled AND k.contactless_enabled,
+                   p.contactless_txn_limit, p.contactless_cvm_limit, p.contactless_cumulative_limit, k.contactless_no_cvm_total,
+                   p.verify_cvv2
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN account a      ON a.id = k.account_id
@@ -1034,6 +1099,13 @@ public class AuthorizationService {
         c.fraudExemptUntil = rs.getObject(42, OffsetDateTime.class);
         c.feePlan = rs.getString(43);
         c.fxAllowed = rs.getBoolean(44);
+        c.imkSmiName = rs.getString(45);
+        c.contactlessEnabled = rs.getBoolean(46);
+        c.ctlsTxnLimit = (Long) rs.getObject(47);
+        c.ctlsCvmLimit = (Long) rs.getObject(48);
+        c.ctlsCumulativeLimit = (Long) rs.getObject(49);
+        c.noCvmTotal = rs.getLong(50);
+        c.verifyCvv2 = rs.getBoolean(51);
         return c;
     }
 

@@ -47,7 +47,14 @@ public class ReferenceDataService {
                           String cvkKeyName, String imkAcKeyName, int pinTryLimit, int dailyWdCount,
                           long dailyWdAmount, long perTxnWdMax, int maxCardsPerAccount, boolean active,
                           long cardsIssued, long rangeRemaining, UsageSettings usage, RenewalSettings renewal,
-                          EmvSettings emv) {}
+                          EmvSettings emv, ChipSettings chip) {}
+
+    /**
+     * Chip and card-verification settings (CMS-110). Contactless amounts in minor units, null = no limit.
+     * imkSmiKeyName signs issuer scripts; verifyCvv2 makes CVV2 mandatory for e-commerce.
+     */
+    public record ChipSettings(String imkSmiKeyName, Boolean contactlessEnabled, Long contactlessTxnLimit,
+                               Long contactlessCvmLimit, Long contactlessCumulativeLimit, Boolean verifyCvv2) {}
 
     /** Renewal and print housekeeping (batch jobs CARD_RENEWAL, STALE_PENDING_PRINT). */
     public record RenewalSettings(Boolean autoRenew, Integer leadDays, Boolean samePan, Integer pendingPrintMaxDays) {}
@@ -72,7 +79,7 @@ public class ReferenceDataService {
                                  String cvkKeyName, String imkAcKeyName, Integer pinTryLimit,
                                  Integer dailyWdCount, Long dailyWdAmount, Long perTxnWdMax,
                                  Integer maxCardsPerAccount, Boolean active, UsageSettings usage, RenewalSettings renewal,
-                                 EmvSettings emv) {}
+                                 EmvSettings emv, ChipSettings chip) {}
 
     public record Eligibility(String accountTypeCode, String segmentCode) {}
 
@@ -302,7 +309,9 @@ public class ReferenceDataService {
                    p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount),
                    COALESCE(p.per_txn_pos_max, p.per_txn_wd_max), p.wd_fee, p.bi_fee, p.verify_cvv, p.preauth_hold_days,
                    p.auto_renew, p.renewal_lead_days, p.renew_same_pan, p.pending_print_max_days, p.emv_scheme, p.emv_data_list,
-                   p.core_stip_limit, p.fee_plan_code, p.fx_allowed
+                   p.core_stip_limit, p.fee_plan_code, p.fx_allowed,
+                   p.imk_smi_key_name, p.contactless_enabled, p.contactless_txn_limit, p.contactless_cvm_limit,
+                   p.contactless_cumulative_limit, p.verify_cvv2
               FROM card_product p
             """;
 
@@ -344,6 +353,7 @@ public class ReferenceDataService {
         saveUsage(id, usageOrDefault(r), op);
         saveRenewal(id, r.renewal() == null ? new RenewalSettings(true, 30, true, 30) : r.renewal());
         if (r.emv() != null) saveEmv(id, r.emv());
+        if (r.chip() != null) saveChip(id, r.chip());
         audit.record(op, "CREATE_PRODUCT", "card_product", id, Map.of("code", code, "bin", r.bin()));
         return product(code);
     }
@@ -371,6 +381,7 @@ public class ReferenceDataService {
         saveUsage(cur.id(), r.usage() == null ? cur.usage() : r.usage(), op);
         saveRenewal(cur.id(), r.renewal() == null ? cur.renewal() : r.renewal());
         saveEmv(cur.id(), r.emv() == null ? cur.emv() : r.emv());
+        if (r.chip() != null) saveChip(cur.id(), r.chip());
         audit.record(op, "UPDATE_PRODUCT", "card_product", cur.id(), Map.of("code", code));
         return product(code);
     }
@@ -474,11 +485,29 @@ public class ReferenceDataService {
 
     private void saveEmv(long productId, EmvSettings e) {
         String scheme = e.scheme() == null ? "EMV_CSK" : e.scheme();
-        if (!List.of("VISA_CVN10", "EMV_CSK").contains(scheme)) bad("Cryptogram scheme must be VISA_CVN10 or EMV_CSK");
+        if (!List.of("VISA_CVN10", "VISA_CVN17", "EMV_CSK").contains(scheme)) bad("Cryptogram scheme must be VISA_CVN10, VISA_CVN17 or EMV_CSK");
         String list = e.dataList() == null ? "" : e.dataList().replace(" ", "").toUpperCase();
-        if (!list.matches("([0-9A-F]{2,6}(:CVR)?)(,[0-9A-F]{2,6}(:CVR)?)*")) bad("Data list: comma-separated tags, e.g. 9F02,9F03,...,9F10:CVR");
+        if (!list.matches("([0-9A-F]{2,6}(:CVR|:B[0-9]{1,2})?)(,[0-9A-F]{2,6}(:CVR|:B[0-9]{1,2})?)*")) {
+            bad("Data list: comma-separated tags, e.g. 9F02,9F03,...,9F10:CVR (9F10:B5 = byte 5)");
+        }
         if (list.length() > 256) bad("Data list too long");
         jdbc.update("UPDATE card_product SET emv_scheme = ?, emv_data_list = ? WHERE id = ?", scheme, list, productId);
+    }
+
+    private void saveChip(long productId, ChipSettings c) {
+        String smi = c.imkSmiKeyName() == null || c.imkSmiKeyName().isBlank() ? null : c.imkSmiKeyName().trim();
+        if (smi != null) requireKey(smi, "IMK_SMI");
+        for (Long l : new Long[]{c.contactlessTxnLimit(), c.contactlessCvmLimit(), c.contactlessCumulativeLimit()}) {
+            if (l != null && l < 0) bad("Contactless limits cannot be negative");
+        }
+        if (c.contactlessCvmLimit() != null && c.contactlessTxnLimit() != null && c.contactlessCvmLimit() > c.contactlessTxnLimit()) {
+            bad("The no-PIN limit cannot exceed the contactless limit");
+        }
+        jdbc.update("""
+                UPDATE card_product SET imk_smi_key_name = ?, contactless_enabled = ?, contactless_txn_limit = ?,
+                       contactless_cvm_limit = ?, contactless_cumulative_limit = ?, verify_cvv2 = ? WHERE id = ?
+                """, smi, !Boolean.FALSE.equals(c.contactlessEnabled()), c.contactlessTxnLimit(), c.contactlessCvmLimit(),
+                c.contactlessCumulativeLimit(), Boolean.TRUE.equals(c.verifyCvv2()), productId);
     }
 
     private void requireKey(String name, String type) {
@@ -500,7 +529,9 @@ public class ReferenceDataService {
                         rs.getLong(32), rs.getLong(33), rs.getLong(34), rs.getLong(35), rs.getBoolean(36),
                         rs.getInt(37), rs.getLong(44), rs.getString(45), rs.getBoolean(46)),
                 new RenewalSettings(rs.getBoolean(38), rs.getInt(39), rs.getBoolean(40), rs.getInt(41)),
-                new EmvSettings(rs.getString(42), rs.getString(43)));
+                new EmvSettings(rs.getString(42), rs.getString(43)),
+                new ChipSettings(rs.getString(47), rs.getBoolean(48), (Long) rs.getObject(49), (Long) rs.getObject(50),
+                        (Long) rs.getObject(51), rs.getBoolean(52)));
     }
 
     // =========================================================================

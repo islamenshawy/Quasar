@@ -89,7 +89,9 @@ public final class IsoMapper {
                 m.getString(49), m.getString(11), m.getString(37), m.getString(7), m.getString(12),
                 m.getString(32), trim(m.getString(41)), mcc, trim(m.getString(43)), advice, original, completed,
                 m.hasField(55) ? ISOUtil.hexString(m.getBytes(55)) : null,
-                blankToNull(m.getString(19)));
+                blankToNull(m.getString(19)),
+                entryMode(m.getString(22), channel),
+                cvv2(m.getString(48)));
     }
 
     /** Response to a financial / authorization / reversal message: echoes the keys, adds 38, 39, 54. */
@@ -162,6 +164,29 @@ public final class IsoMapper {
 
     private static String trim(String s) {
         return s == null ? null : s.trim();
+    }
+
+    /**
+     * Card data input mode, field 22 position 7. PROVISIONAL (IN-01): 5 chip, M / A / 7 contactless,
+     * 2 / 8 / 9 magnetic stripe, 1 / 6 manual; e-commerce from the channel.
+     */
+    static String entryMode(String pos, Channel channel) {
+        if (channel == Channel.ECOM) return "ECOM";
+        if (pos == null || pos.length() < 7) return null;
+        return switch (pos.charAt(6)) {
+            case '5' -> "CHIP";
+            case 'M', 'A', '7' -> "CONTACTLESS";
+            case '2', '8', '9' -> "MAGSTRIPE";
+            case '1', '6' -> "MANUAL";
+            default -> null;
+        };
+    }
+
+    /** CVV2 in field 48 as "CV2" + 3-4 digits. PROVISIONAL (IN-01): replace with the BASE24 token layout. */
+    static String cvv2(String f48) {
+        if (f48 == null) return null;
+        java.util.regex.Matcher x = java.util.regex.Pattern.compile("CV2([0-9]{3,4})").matcher(f48);
+        return x.find() ? x.group(1) : null;
     }
 
     private static String blankToNull(String s) {

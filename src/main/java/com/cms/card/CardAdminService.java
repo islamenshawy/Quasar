@@ -171,12 +171,12 @@ public class CardAdminService {
     // ---------------- controls and limits ----------------
 
     /** Channel switches and limit overrides (null = product value), with the product values and today's usage. */
-    public record CardLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled,
+    public record CardLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled, boolean contactlessEnabled,
                              Integer dailyWdCountLimit, Long dailyWdAmountLimit, Long perTxnWdLimit,
                              Integer dailyPosCountLimit, Long dailyPosAmountLimit, Long perTxnPosLimit,
                              ProductLimits product, Usage today, String currencyCode, int exponent) {}
 
-    public record ProductLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled, int dailyWdCount,
+    public record ProductLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled, boolean contactlessEnabled, int dailyWdCount,
                                 long dailyWdAmount, long perTxnWdMax, int dailyPosCount, long dailyPosAmount,
                                 long perTxnPosMax) {}
 
@@ -185,7 +185,7 @@ public class CardAdminService {
     public record ControlsRequest(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled,
                                   Integer dailyWdCountLimit, Long dailyWdAmountLimit, Long perTxnWdLimit,
                                   Integer dailyPosCountLimit, Long dailyPosAmountLimit, Long perTxnPosLimit,
-                                  String reason) {}
+                                  String reason, Boolean contactlessEnabled) {}
 
     public CardLimits limits(long cardId) {
         get(cardId);
@@ -199,14 +199,14 @@ public class CardAdminService {
                        k.per_txn_wd_limit, k.daily_pos_count_limit, k.daily_pos_amount_limit, k.per_txn_pos_limit,
                        p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_wd_count, p.daily_wd_amount,
                        p.per_txn_wd_max, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount), COALESCE(p.per_txn_pos_max, p.per_txn_wd_max),
-                       a.currency_code, cur.exponent
+                       a.currency_code, cur.exponent, k.contactless_enabled, p.contactless_enabled
                   FROM card k JOIN card_product p ON p.id = k.product_id
                   JOIN account a ON a.id = k.account_id JOIN currency cur ON cur.code = a.currency_code
                  WHERE k.id = ?
-                """, (rs, i) -> new CardLimits(rs.getBoolean(1), rs.getBoolean(2), rs.getBoolean(3),
+                """, (rs, i) -> new CardLimits(rs.getBoolean(1), rs.getBoolean(2), rs.getBoolean(3), rs.getBoolean(21),
                         (Integer) rs.getObject(4), (Long) rs.getObject(5), (Long) rs.getObject(6),
                         (Integer) rs.getObject(7), (Long) rs.getObject(8), (Long) rs.getObject(9),
-                        new ProductLimits(rs.getBoolean(10), rs.getBoolean(11), rs.getBoolean(12), rs.getInt(13),
+                        new ProductLimits(rs.getBoolean(10), rs.getBoolean(11), rs.getBoolean(12), rs.getBoolean(22), rs.getInt(13),
                                 rs.getLong(14), rs.getLong(15), rs.getInt(16), rs.getLong(17), rs.getLong(18)),
                         u, rs.getString(19), rs.getInt(20)), cardId);
     }
@@ -230,10 +230,11 @@ public class CardAdminService {
         jdbc.update("""
                 UPDATE card SET atm_enabled = ?, pos_enabled = ?, ecom_enabled = ?, daily_wd_count_limit = ?,
                        daily_wd_amount_limit = ?, per_txn_wd_limit = ?, daily_pos_count_limit = ?,
-                       daily_pos_amount_limit = ?, per_txn_pos_limit = ?, version = version + 1
+                       daily_pos_amount_limit = ?, per_txn_pos_limit = ?,
+                       contactless_enabled = COALESCE(?, contactless_enabled), version = version + 1
                  WHERE id = ?
                 """, r.atmEnabled(), r.posEnabled(), r.ecomEnabled(), r.dailyWdCountLimit(), r.dailyWdAmountLimit(),
-                r.perTxnWdLimit(), r.dailyPosCountLimit(), r.dailyPosAmountLimit(), r.perTxnPosLimit(), cardId);
+                r.perTxnWdLimit(), r.dailyPosCountLimit(), r.dailyPosAmountLimit(), r.perTxnPosLimit(), r.contactlessEnabled(), cardId);
         Map<String, Object> d = new java.util.LinkedHashMap<>();
         d.put("reason", r.reason().trim());
         d.put("before", controlsOf(before));

@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class HsmSimulator {
 
-    static final String VERSION = "1.1.0";
+    static final String VERSION = "1.2.0";
     static final HexFormat HEX = HexFormat.of().withUpperCase();
     static final String DEFAULT_LMK = "89ABCDEF0123456776543210FEDCBA98";
 
@@ -132,6 +132,7 @@ public class HsmSimulator {
                 case "CW" -> cmdCW(c);
                 case "CY" -> cmdCY(c);
                 case "KQ" -> cmdKQ(c);
+                case "KU" -> cmdKU(c);
                 default -> "68";                       // command not supported by simulator
             };
         } catch (SimError e) {
@@ -220,6 +221,35 @@ public class HsmSimulator {
             if (mode == '0') return "00";
         }
         return "00" + str(arpc(key, arqc, arc));
+    }
+
+    /**
+     * KU - issuer script MAC (EMV secure messaging for integrity), CMS-110. PROVISIONAL layout (IN-03):
+     *   KU + mode(1, '0' = MAC) + scheme(1) + MK-SMI + Y(8B) + ATC(2B) + ARQC(8B) + data length(2H) + data(nB)
+     *   -> KV + err + MAC(4B)
+     * scheme '0' card key (Visa CVN10 / CVN17), '1' session key derived from the ARQC (EMV Book 2 A1.3, R = AC).
+     * MAC: ISO 9797-1 algorithm 3, padding method 2, leftmost 4 bytes. The caller sends the full MAC input
+     * (command header || ATC || ARQC || command data).
+     */
+    static String cmdKU(Cursor c) {
+        char mode = c.take(1).charAt(0), scheme = c.take(1).charAt(0);
+        if (mode != '0') throw new SimError("15");
+        byte[] mk = fromLmk(c.key());
+        byte[] y = bin(c.take(8)), atc = bin(c.take(2)), arqc = bin(c.take(8));
+        byte[] data = bin(c.take(Integer.parseInt(c.take(2), 16)));
+        return "00" + str(scriptMac(mk, y, arqc, scheme, data));
+    }
+
+    static byte[] scriptMac(byte[] mk, byte[] y, byte[] arqc, char scheme, byte[] data) {
+        byte[] udk = udk(mk, y);
+        byte[] key = udk;
+        if (scheme != '0') {
+            byte[] l = arqc.clone(), r = arqc.clone();
+            l[2] = (byte) 0xF0;
+            r[2] = 0x0F;
+            key = parity(concat(tdes(udk, l, true), tdes(udk, r, true)));
+        }
+        return Arrays.copyOf(arqc(key, data, '1'), 4);
     }
 
     /** Key that computes the cryptogram: the card key (Visa CVN10) or the session key for this ATC (EMV CSK). */
@@ -455,6 +485,7 @@ public class HsmSimulator {
         {"PVK_P01",      "PVK", "FEDCBA98765432100123456789ABCDEF"},
         {"CVK_P01",      "CVK", "0123456789ABCDEFFEDCBA9876543210"},
         {"IMK_AC_P01",   "IMK_AC", "4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D"},
+        {"IMK_SMI_P01",  "IMK_SMI", "5A5A5A5A5A5A5A5A3C3C3C3C3C3C3C3C"},
     };
 
     static void seed() {
@@ -493,6 +524,20 @@ public class HsmSimulator {
                         + String.format("%02X", data.length) + str(data) + ";" + str(bad) + "00");
                 fail += check("KQ scheme " + scheme + " wrong ARQC refused", r2.equals("KR01"), r2);
             }
+        }
+        {
+            // issuer script MAC: PIN UNBLOCK 84 24 00 00 04 || ATC || ARQC
+            byte[] mk = HEX.parseHex("5A5A5A5A5A5A5A5A3C3C3C3C3C3C3C3C");
+            byte[] y = HEX.parseHex("9999500000000501"), atc = HEX.parseHex("0007"), ac = HEX.parseHex("1122334455667788");
+            byte[] data = HEX.parseHex("8424000004" + "0007" + "1122334455667788");
+            for (char scheme : new char[]{'0', '1'}) {
+                String r = process("KU", "0" + scheme + keyUnderLmk(mk) + str(y) + str(atc) + str(ac)
+                        + String.format("%02X", data.length) + str(data));
+                byte[] mac = scriptMac(mk, y, ac, scheme, data);
+                fail += check("KU scheme " + scheme + " script MAC", r.equals("KV00" + str(mac)), HEX.formatHex(bin(r)));
+            }
+            byte[] other = data.clone(); other[1] = 0x1E;
+            fail += check("KU MAC depends on the command", !Arrays.equals(scriptMac(mk, y, ac, '1', data), scriptMac(mk, y, ac, '1', other)), "");
         }
         byte[] zpk = HEX.parseHex("0B0B0B0B0B0B0B0B1616161616161616");
         byte[] pvk = HEX.parseHex("FEDCBA98765432100123456789ABCDEF");

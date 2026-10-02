@@ -51,7 +51,7 @@ public class CorehostSimulator {
                              Long amount, String currency, String terminalId, String acquirerId, String mcc,
                              String merchant, String originalRef, Long amountCompleted, Boolean advice,
                              Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc, String tvr,
-                             String country) {}
+                             String country, Boolean contactless, String cvv2, Boolean failScripts) {}
 
     public record SimResult(String ref, String mti, Map<String, String> request, Map<String, String> response,
                             String actionCode, String actionText, boolean approved, Long ledgerBalance,
@@ -77,6 +77,12 @@ public class CorehostSimulator {
     private final Map<String, Integer> atcByCard = new ConcurrentHashMap<>();
     /** Card key per sent chip message, to check the ARPC in the answer. */
     private final Map<String, byte[][]> chipState = new ConcurrentHashMap<>();
+    /** Per sent chip message: card id, Y, scheme, whether the emulated chip should refuse scripts. */
+    private record ChipMeta(long cardId, byte[] y, char scheme, boolean failScripts) {}
+    private final Map<String, ChipMeta> chipMeta = new ConcurrentHashMap<>();
+    /** Issuer script results the emulated chip reports in 9F5B on its next transaction, per card. */
+    private final Map<Long, java.util.List<byte[]>> scriptResults = new ConcurrentHashMap<>();
+    private final byte[] imkSmi;
 
     public CorehostSimulator(IsoCodec codec, JdbcTemplate jdbc, PanCrypto panCrypto,
                              @Value("${cms.dev.iso-host:localhost}") String host,
@@ -84,6 +90,7 @@ public class CorehostSimulator {
                              @Value("${cms.dev.acquirer-zpk-clear:4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E}") String zpkClear,
                              @Value("${cms.dev.zmk-clear:1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A}") String zmkClear,
                              @Value("${cms.dev.imk-ac-clear:4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D}") String imkClear,
+                             @Value("${cms.dev.imk-smi-clear:5A5A5A5A5A5A5A5A3C3C3C3C3C3C3C3C}") String imkSmiClear,
                              @Value("${cms.keys.corehost-zpk-name}") String zpkName) {
         this.codec = codec;
         this.jdbc = jdbc;
@@ -93,6 +100,7 @@ public class CorehostSimulator {
         this.zpk.set(HEX.parseHex(zpkClear));
         this.zmk = HEX.parseHex(zmkClear);
         this.imk = HEX.parseHex(imkClear);
+        this.imkSmi = HEX.parseHex(imkSmiClear);
         this.zpkName = zpkName;
     }
 
@@ -156,7 +164,10 @@ public class CorehostSimulator {
         m.set(7, LocalDateTime.now(ZoneOffset.UTC).format(F7));
         m.set(11, s);
         m.set(12, now.format(F12));
-        m.set(22, channel.equals("ECOM") ? "100010000000" : "210101210000");
+        // position 7, card data input mode (provisional, IN-01): 5 chip, M contactless, 2 magnetic stripe
+        char input = Boolean.TRUE.equals(r.contactless()) ? 'M' : Boolean.TRUE.equals(r.chip()) ? '5' : '2';
+        m.set(22, channel.equals("ECOM") ? "100010000000" : "210101" + input + "10000");
+        if (r.cvv2() != null && r.cvv2().matches("[0-9]{3,4}")) m.set(48, "CV2" + r.cvv2());
         m.set(26, r.mcc() != null ? r.mcc() : channel.equals("ATM") ? "6011" : "5411");
         m.set(32, acquirer);
         if (r.country() != null && r.country().matches("[0-9]{3}")) m.set(19, r.country());
@@ -299,7 +310,7 @@ public class CorehostSimulator {
                 SELECT k.psn, pr.emv_scheme, pr.emv_data_list, pr.scheme FROM card k JOIN card_product pr ON pr.id = k.product_id WHERE k.id = ?
                 """, r.cardId());
         String psn = (String) p.get("psn");
-        char scheme = "VISA_CVN10".equals(p.get("emv_scheme")) ? '0' : '1';
+        char scheme = com.cms.emv.EmvService.cryptoScheme((String) p.get("emv_scheme"));
         // like a real chip, the counter only goes up: continue after the highest ATC the CMS has seen
         int atcValue = r.atc() != null ? r.atc() : atcByCard.merge(String.valueOf(r.cardId()), 1,
                 (cur, one) -> cur + one);
@@ -329,7 +340,14 @@ public class CorehostSimulator {
         t.put("9F37", un);
         t.put("82", HEX.parseHex("3C00"));
         t.put("9F36", atc);
-        t.put("9F10", HEX.parseHex(scheme == '0' ? "06010A03A00000" : "06011203A00000"));
+        t.put("9F10", HEX.parseHex("VISA_CVN17".equals(p.get("emv_scheme")) ? "06011103A00000"
+                : scheme == '0' ? "06010A03A00000" : "06011203A00000"));
+        java.util.List<byte[]> done = scriptResults.remove(r.cardId());
+        if (done != null && !done.isEmpty()) {
+            java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+            done.forEach(b::writeBytes);
+            t.put("9F5B", b.toByteArray());     // issuer script results from the previous answer
+        }
         t.put("9F27", HEX.parseHex("80"));
         t.put("5F34", HEX.parseHex(psn));
         t.put("84", HEX.parseHex(switch (String.valueOf(p.get("scheme"))) {
@@ -352,6 +370,7 @@ public class CorehostSimulator {
         t.put("9F26", arqc);
         byte[] field55 = com.cms.emv.Tlv.encode(t);
         chipState.put(ref, new byte[][]{key, arqc, atc, field55});
+        chipMeta.put(ref, new ChipMeta(r.cardId(), com.cms.emv.EmvService.y(pan, psn), scheme, Boolean.TRUE.equals(r.failScripts())));
         return field55;
     }
 
@@ -372,6 +391,47 @@ public class CorehostSimulator {
             out.put("arc", new String(arc, java.nio.charset.StandardCharsets.US_ASCII));
             out.put("arpcValid", java.util.Arrays.equals(expected, java.util.Arrays.copyOf(iad, 8)));
         }
+        ChipMeta meta = chipMeta.remove(ref);
+        if (meta != null && resp.hasField(55)) out.put("scripts", runScripts(meta, st, resp.getBytes(55)));
+        return out;
+    }
+
+    /**
+     * The emulated chip runs the issuer scripts of the answer (tag 72): checks each command's MAC with the dev
+     * IMK-SMI exactly as a card would, and keeps the results (9F5B) for its next transaction.
+     */
+    private java.util.List<Map<String, Object>> runScripts(ChipMeta meta, byte[][] st, byte[] field55) {
+        java.util.List<Map<String, Object>> out = new java.util.ArrayList<>();
+        java.util.List<byte[]> results = new java.util.ArrayList<>();
+        int seq = 0;
+        for (Map.Entry<String, byte[]> e : com.cms.emv.Tlv.parseList(field55)) {
+            if (!"72".equals(e.getKey())) continue;
+            Map<String, byte[]> inner = com.cms.emv.Tlv.parse(e.getValue());
+            byte[] id = inner.get("9F18"), apdu = inner.get("86");
+            if (id == null || apdu == null || apdu.length < 9) continue;
+            byte[] header = java.util.Arrays.copyOfRange(apdu, 0, 5);
+            byte[] data = java.util.Arrays.copyOfRange(apdu, 5, apdu.length - 4);
+            byte[] mac = java.util.Arrays.copyOfRange(apdu, apdu.length - 4, apdu.length);
+            java.io.ByteArrayOutputStream in = new java.io.ByteArrayOutputStream();
+            in.writeBytes(header);
+            in.writeBytes(st[2]);
+            in.writeBytes(st[1]);
+            in.writeBytes(data);
+            boolean valid = java.util.Arrays.equals(mac, com.cms.emv.EmvCrypto.scriptMac(imkSmi, meta.y(), st[1], meta.scheme(), in.toByteArray()));
+            int result = valid && !meta.failScripts() ? 2 : 1;
+            seq++;
+            byte[] r = new byte[5];
+            r[0] = (byte) ((result << 4) | Math.min(seq, 15));
+            System.arraycopy(id, 0, r, 1, 4);
+            results.add(r);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("scriptId", HEX.formatHex(id));
+            m.put("apdu", HEX.formatHex(apdu));
+            m.put("macValid", valid);
+            m.put("result", result == 2 ? "SUCCESSFUL" : "FAILED");
+            out.add(m);
+        }
+        if (!results.isEmpty()) scriptResults.computeIfAbsent(meta.cardId(), k -> new java.util.ArrayList<>()).addAll(results);
         return out;
     }
 

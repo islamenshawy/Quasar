@@ -9,6 +9,7 @@ import com.cms.card.IssuanceException;
 import com.cms.common.AuditLog;
 import com.cms.common.Settings;
 import com.cms.core.CoreSafService;
+import com.cms.emv.IssuerScriptService;
 import com.cms.fee.FeeService;
 import com.cms.fraud.FraudService;
 import com.cms.notify.NotificationService;
@@ -48,12 +49,13 @@ public class ApprovalActions {
     public record FeePlanSave(String code, boolean create, FeeService.FeePlan plan) {}
     public record FxRateSave(FeeService.FxRate rate) {}
     public record TemplateSave(NotificationService.Template template) {}
+    public record ChipScript(long cardId, String command, String value, String reason) {}
 
     public ApprovalActions(ApprovalService approvals, ReferenceDataService ref, Settings settings,
                            LedgerService ledger, CardAdminService cards, CustomerService customers,
                            AccountService accounts, AuditLog audit, CardIssuanceService issuance, BatchService batch,
                            CoreSafService saf, FraudService fraud, FeeService fees,
-                           NotificationService notifications) {
+                           NotificationService notifications, IssuerScriptService scripts) {
         approvals.register("CURRENCY_SAVE", CurrencySave.class, (p, op) -> ref.saveCurrency(p.code(), p.data(), p.create(), op));
         approvals.register("SEGMENT_SAVE", SegmentSave.class, (p, op) -> ref.saveSegment(p.code(), p.data(), p.create(), op));
         approvals.register("ACCOUNT_TYPE_SAVE", AccountTypeSave.class, (p, op) -> ref.saveAccountType(p.code(), p.data(), p.create(), op));
@@ -95,5 +97,6 @@ public class ApprovalActions {
         approvals.register("FEE_PLAN_SAVE", FeePlanSave.class, (p, op) -> fees.savePlan(p.code(), p.create(), p.plan(), op));
         approvals.register("FX_RATE_SAVE", FxRateSave.class, (p, op) -> fees.saveFxRate(p.rate(), op));
         approvals.register("NOTIFICATION_TEMPLATE_SAVE", TemplateSave.class, (p, op) -> notifications.saveTemplate(p.template(), op));
+        approvals.register("CHIP_SCRIPT", ChipScript.class, (p, op) -> scripts.queue(p.cardId(), p.command(), p.value(), p.reason(), op));
     }
 }
