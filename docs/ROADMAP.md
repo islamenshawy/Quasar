@@ -104,7 +104,8 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 |---|---|---|
 | CMS-056 | SOAP endpoint from Dexxis WSDL | Blocked (IN-02) |
 | CMS-057 | ARQC verification / ARPC generation (KQ) + hsm-sim support | Done, provisional; confirm KQ layout, key ownership (IN-03) and CDOL1 per chip profile |
-| CMS-068 | Issuer scripts (PIN unblock / change on chip), CDA/DDA key management | Planned |
+| CMS-068 | Issuer scripts (PIN unblock / change on chip), CDA/DDA key management | Partly done in CMS-110 (MAC-only scripts); offline PIN change (enciphered PIN), CDA/DDA keys planned |
+| CMS-110 | Issuer scripts, contactless limits, Visa CVN17, CVV2, CVV1/iCVV by entry mode | Done; KU layout (IN-03) and field 22 / 48 positions (IN-01) provisional. dCVV (contactless magstripe) not built: MSD is retired by the schemes |
 | CMS-090 | Core banking funds interface, stand-in limit, store-and-forward queue and replay | Done, provisional contract (IN-06) |
 | CMS-095 | Fraud and risk rules, scoring, alert queue and case outcomes | Done; thresholds of the starter rules to be agreed with the fraud team before activation |
 | CMS-100 | Fee plans, card event and periodic fees, FX conversion and markup | Done |

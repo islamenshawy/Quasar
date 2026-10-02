@@ -195,6 +195,22 @@ Uses the DEV LOG provider and its sink (`/api/dev/notifications/sink`); the disp
 | N22 | Channel API with a wrong key | 401 |
 | N23-N25 | Template change needs approval; OTP text without {{code}} | APPROVED; INVALID_REQUEST |
 
+## 3i. Chip completeness catalogue (`scripts/chip-test.sh`)
+
+Needs hsm-sim 1.2.0 (KU). Script and contactless cases go through BASE24 with the switch simulator's emulated chip; P02 is switched to CVN17 with CVV checks and restored at the end.
+
+| ID | Case | Expected |
+|---|---|---|
+| K00-K03 | Setup; queue PIN unblock; queue it twice; magstripe transaction | QUEUED; DUPLICATE; not delivered |
+| K04-K06 | Chip transaction; script recorded; next chip transaction | ARPC valid, MAC valid; SENT with 8424000004; APPLIED from 9F5B |
+| K07-K09 | Two scripts in one answer; chip refuses one | both MACs valid; FAILED; the others APPLIED |
+| K10-K11 | Cancel a queued script | CANCELLED, not delivered |
+| K12-K18 | Contactless: 100 no PIN; 700 no PIN; 700 with PIN; four 500 taps; one more; after a PIN; over 5,000 | 000; 112; 000; 000; 112; 000; 121 |
+| K19 | Contactless off on the card | 119 |
+| K20-K21 | P02 on CVN17; chip transaction | ARPC valid |
+| K22-K25 | Magstripe read with CVV1 / with iCVV; chip read with iCVV / with CVV1 | 000; 129; 000; 129 |
+| K26-K28 | E-commerce without CVV2; wrong CVV2; right CVV2 | 129 "CVV2 required"; 129 "CVV2 mismatch"; 000 |
+
 ## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |
