@@ -147,6 +147,23 @@ Runs against the DEV core banking simulator (`/api/dev/core-sim`); P02 card on a
 | C19-C22 | Stand-in purchase, cancel queued posting (maker-checker), replay | cancelled posting never reaches core |
 | C23-C24 | Nothing pending; manual ledger entry on a core account | refused (INVALID_REQUEST) |
 
+## 3f. Fraud rules catalogue (`scripts/fraud-test.sh`)
+
+Test rules use fixed codes `TEST_*`, scoped to product P01, and are switched off at the end (the decline score is reset to 100).
+
+| ID | Case | Expected |
+|---|---|---|
+| F00-F03 | Setup; starter rules inactive; rule change needs approval by a second supervisor | approvalPending, APPROVED |
+| F04-F05 | Gambling MCC rule (DECLINE); other MCC | 102; 000 |
+| F06-F07 | Advice hitting a DECLINE rule | 000, alert with action ALERT |
+| F08-F10 | Foreign acquirer rule (ALERT 30); domestic purchase | 000 + alert score 30; no new alert |
+| F11-F12 | Two alert rules 30 + 80 reach decline score 100; with score 200 | 102 (score 110); 000 |
+| F13 | Velocity: one more than the allowed count in 10 minutes | 102 |
+| F14-F15 | DECLINE_BLOCK rule on MCC 4829 | 102 and card BLOCKED |
+| F16-F19 | Open count; take; note; false positive with 1 h pause | assignedTo, note stamped, FALSE_POSITIVE |
+| F20 | Paused card passes the blocking rule | 000 |
+| F21-F23 | Confirm fraud as LOST; other open alerts closed; resolve twice | LOST, 0 open, INVALID_STATUS |
+
 ## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |
