@@ -106,6 +106,7 @@ const product = ref(null)
 const currencies = ref([])
 const keys = ref([])
 const accountTypes = ref([])
+const feePlans = ref([])
 const segments = ref([])
 const matrix = reactive({})
 const form = reactive({
@@ -115,7 +116,7 @@ const form = reactive({
   pinTryLimit: 3, dailyWdCount: 10, dailyWdAmount: null, perTxnWdMax: null, maxCardsPerAccount: 1, active: true,
   // usage settings (flattened here, nested as "usage" in the API)
   atmEnabled: true, posEnabled: true, ecomEnabled: false, dailyPosCount: 20, dailyPosAmount: null, perTxnPosMax: null,
-  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7, coreStipLimit: 0,
+  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7, coreStipLimit: 0, feePlanCode: '', fxAllowed: false,
   autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30,
   emvScheme: 'EMV_CSK', emvDataList: '9F02,9F03,9F1A,95,5F2A,9A,9C,9F37,82,9F36,9F10:CVR'
 })
@@ -193,7 +194,7 @@ const sections = computed(() => [
     ]
   },
   {
-    title: 'Channels, purchases and fees',
+    title: 'Channels, purchases, fees and currencies',
     note: `A channel switched off here is off for every card of the product. Amounts in ${form.currencyCode}.`,
     fields: [
       { name: 'atmEnabled', label: 'ATM', type: 'toggle', col: 'col-4' },
@@ -203,8 +204,10 @@ const sections = computed(() => [
       { name: 'dailyPosAmount', label: 'Daily purchase amount', type: 'number', required: true, step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4', rules: [v => v >= 0 || '≥ 0'] },
       { name: 'perTxnPosMax', label: 'Per purchase max', type: 'number', required: true, step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4',
         rules: [v => v >= 0 || '≥ 0', v => v <= form.dailyPosAmount || 'Cannot exceed the daily purchase amount'] },
-      { name: 'wdFee', label: 'ATM withdrawal fee', type: 'number', required: true, step: 'any', prefix: form.currencyCode, rules: [v => v >= 0 || '≥ 0'] },
-      { name: 'biFee', label: 'Balance inquiry fee', type: 'number', required: true, step: 'any', prefix: form.currencyCode, rules: [v => v >= 0 || '≥ 0'] },
+      { name: 'feePlanCode', label: 'Fee plan', type: 'select', col: 'col-12 col-sm-8',
+        hint: 'What the cards pay: issuance, ATM, purchases, FX markup, monthly / annual (Setup → Fee plans)',
+        options: [{ label: 'No fees', value: '' }, ...feePlans.value.filter(p => p.active || p.code === form.feePlanCode).map(p => ({ label: `${p.name} (${p.code})`, value: p.code }))] },
+      { name: 'fxAllowed', label: 'Accept other currencies (FX rates)', type: 'toggle', col: 'col-12 col-sm-4' },
       { name: 'preauthHoldDays', label: 'Pre-auth hold', type: 'number', required: true, suffix: 'days', rules: [v => (v >= 1 && v <= 45) || '1 to 45'] },
       { name: 'coreStipLimit', label: 'Core banking stand-in limit', type: 'number', required: true, step: 'any', prefix: form.currencyCode,
         hint: 'Cards on core banking accounts: approve up to this per transaction while core does not answer (0 = decline 911)',
@@ -236,9 +239,10 @@ const sections = computed(() => [
 ])
 
 async function load () {
-  const [c, k, t, s] = await Promise.all([
+  const [c, k, t, s, fp] = await Promise.all([
     api.get('/admin/setup/currencies'), api.get('/admin/setup/hsm-keys'),
-    api.get('/admin/setup/account-types'), api.get('/admin/setup/segments')])
+    api.get('/admin/setup/account-types'), api.get('/admin/setup/segments'), api.get('/admin/setup/fee-plans')])
+  feePlans.value = fp
   currencies.value = c
   keys.value = k
   accountTypes.value = t
@@ -255,7 +259,7 @@ function setProduct (p) {
   product.value = p
   const exp = currencies.value.find(c => c.code === p.currencyCode)?.exponent ?? 2
   const u = p.usage || {}
-  Object.assign(form, p, u, p.renewal || {}, { emvScheme: p.emv?.scheme, emvDataList: p.emv?.dataList }, {
+  Object.assign(form, p, u, p.renewal || {}, { emvScheme: p.emv?.scheme, emvDataList: p.emv?.dataList, feePlanCode: u.feePlanCode || '' }, {
     description: p.description || '', chipProfile: p.chipProfile || '',
     dailyWdAmount: toMajor(p.dailyWdAmount, exp), perTxnWdMax: toMajor(p.perTxnWdMax, exp)
   })
@@ -277,6 +281,7 @@ async function save () {
     usage: {
       atmEnabled: form.atmEnabled, posEnabled: form.posEnabled, ecomEnabled: form.ecomEnabled,
       dailyPosCount: form.dailyPosCount, verifyCvv: form.verifyCvv, preauthHoldDays: form.preauthHoldDays,
+      feePlanCode: form.feePlanCode || '', fxAllowed: form.fxAllowed,
       ...Object.fromEntries(USAGE_MONEY.map(k => [k, toMinor(form[k], exponent.value)]))
     }
   }

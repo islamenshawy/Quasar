@@ -32,7 +32,19 @@
             <dt>Account</dt><dd class="mono">
               <router-link v-if="current.accountId" :to="`/accounts/${current.accountId}`" @click="dialog = false">{{ current.accountNumber }}</router-link>
               <span v-else>—</span> <span v-if="current.customerName" class="muted"> · {{ current.customerName }}</span></dd>
-            <dt>Amount</dt><dd>{{ amt(current) }}<span v-if="current.feeAmount"> + fee {{ money(current.feeAmount, current.exponent) }}</span></dd>
+            <dt>Amount</dt><dd>{{ amt(current) }}<span v-if="current.feeAmount"> + fees {{ money(current.feeAmount, 2, current.billingCurrency || '') }}</span></dd>
+            <template v-if="current.billingAmount != null">
+              <dt>Billed</dt><dd class="mono">{{ money(current.billingAmount, 2, current.billingCurrency) }} at {{ current.fxRate }}
+                <span v-if="current.fxFee" class="muted"> · FX markup {{ money(current.fxFee, 2) }}</span></dd>
+            </template>
+            <template v-if="current.acquirerCountry"><dt>Acquirer country</dt><dd class="mono">{{ current.acquirerCountry }}</dd></template>
+            <template v-if="current.fraudScore != null">
+              <dt>Fraud score</dt><dd><q-badge :color="current.fraudScore >= 100 ? 'negative' : 'warning'" :label="current.fraudScore" />
+                <span class="mono text-caption q-ml-sm">{{ current.fraudRules }}</span></dd>
+            </template>
+            <template v-if="current.standIn || current.coreRef">
+              <dt>Core banking</dt><dd><q-badge v-if="current.standIn" color="warning" label="stand-in" class="q-mr-sm" /><span class="mono">{{ current.coreRef || 'queued' }}</span></dd>
+            </template>
             <dt v-if="current.amountCompleted != null">Completed</dt>
             <dd v-if="current.amountCompleted != null">{{ money(current.amountCompleted, current.exponent, current.currencyCode) }}</dd>
             <dt>Auth id</dt><dd class="mono">{{ current.authId || '—' }}</dd>
