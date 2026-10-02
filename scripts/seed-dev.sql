@@ -39,3 +39,17 @@ SELECT p.id, t.code, s.code FROM card_product p, account_type t, customer_segmen
 ON CONFLICT DO NOTHING;
 
 COMMIT;
+
+-- core banking funds interface (CMS-090): an account type whose money lives in core banking
+-- (the dev profile points cms.core-banking at the in-process simulator /api/dev/core-sim).
+-- Account numbers come from core; card product P02 may be issued on it and stands in up to 500.00.
+INSERT INTO account_type (code, name, ledger_mode, number_source)
+VALUES ('CORE_CURRENT', 'Current account (core banking)', 'CORE_BANKING', 'CORE_BANKING')
+ON CONFLICT (code) DO NOTHING;
+INSERT INTO account_type_currency (account_type_code, currency_code) VALUES ('CORE_CURRENT', 'EGP')
+ON CONFLICT DO NOTHING;
+INSERT INTO product_eligibility (product_id, account_type_code, segment_code)
+SELECT p.id, 'CORE_CURRENT', s.code FROM card_product p, customer_segment s
+ WHERE p.code = 'P02' AND s.code IN ('PREMIUM','STAFF','MASS')
+ON CONFLICT DO NOTHING;
+UPDATE card_product SET core_stip_limit = 50000 WHERE code = 'P02';

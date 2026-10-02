@@ -183,10 +183,15 @@ public class LedgerService {
     public UUID manualEntry(long accountId, String type, long amount, String narrative, String actor) {
         if (amount <= 0) throw new IssuanceException("INVALID_REQUEST", "Amount must be positive");
         if (narrative == null || narrative.isBlank()) throw new IssuanceException("INVALID_REQUEST", "Narrative is required");
-        record A(String status, String currency, long ledger, long held) {}
-        A a = jdbc.query("SELECT status, currency_code, ledger_balance, held_amount FROM account WHERE id = ? FOR UPDATE",
-                rs -> rs.next() ? new A(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getLong(4)) : null, accountId);
+        record A(String status, String currency, long ledger, long held, String mode) {}
+        A a = jdbc.query("""
+                SELECT a.status, a.currency_code, a.ledger_balance, a.held_amount, COALESCE(t.ledger_mode, 'CMS_LEDGER')
+                  FROM account a LEFT JOIN account_type t ON t.code = a.account_type_code WHERE a.id = ? FOR UPDATE OF a
+                """, rs -> rs.next() ? new A(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getLong(4), rs.getString(5)) : null, accountId);
         if (a == null) throw new IssuanceException("ACCOUNT_NOT_FOUND", "Account not found");
+        if ("CORE_BANKING".equals(a.mode())) {
+            throw new IssuanceException("INVALID_REQUEST", "This account is held in core banking; post the entry there");
+        }
         if ("CLOSED".equals(a.status())) throw new IssuanceException("INVALID_STATUS", "Account is CLOSED");
         return switch (type) {
             case "FUNDING" -> post("FUNDING", accountId, amount, a.currency(), Gl.TOPUP_SUSPENSE, narrative.trim(), null, null, actor);

@@ -11,6 +11,12 @@ cms:
     pan-key-check: ${CMS_PAN_KEY_CHECK:WARN}     # log only; other profiles refuse to start when no card matches
   dexxis:
     api-key: ${CMS_DEXXIS_API_KEY:dev-dexxis-key}
+  channel:
+    api-key: ${CMS_CHANNEL_API_KEY:dev-channel-key}
+  core-banking:                       # the in-process core banking simulator (/api/dev/core-sim)
+    base-url: ${CMS_CORE_BANKING_URL:http://localhost:${server.port:8080}/api/dev/core-sim}
+    api-key: ${CMS_CORE_BANKING_API_KEY:dev-core-key}
+    timeout-ms: ${CMS_CORE_BANKING_TIMEOUT_MS:2000}
   dev:
     user-password: ${CMS_DEV_PASSWORD:Dev-Passw0rd!}   # admin, supervisor, supervisor2, operator, viewer
     # TEST keys from scripts/seed-dev.sql, used only by the dev corehost simulator

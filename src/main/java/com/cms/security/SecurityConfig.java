@@ -81,7 +81,9 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http, ObjectMapper json, SecurityContextRepository contexts,
-                                    @Value("${cms.dexxis.api-key:}") String dexxisKey) throws Exception {
+                                    @Value("${cms.dexxis.api-key:}") String dexxisKey,
+                                    @Value("${cms.channel.api-key:}") String channelKey,
+                                    @Value("${cms.core-banking.api-key:}") String coreKey) throws Exception {
         CookieCsrfTokenRepository csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepo.setCookieCustomizer(c -> c.sameSite("Lax"));
         http
@@ -90,20 +92,26 @@ public class SecurityConfig {
                     .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
                     // scripts (Authorization header) and Dexxis (API key) do not use cookies
                     .ignoringRequestMatchers(r -> r.getHeader("Authorization") != null
-                            || r.getRequestURI().startsWith("/api/dexxis/")))
+                            || r.getRequestURI().startsWith("/api/dexxis/") || r.getRequestURI().startsWith("/api/channel/")
+                            || r.getHeader("X-Api-Key") != null && r.getRequestURI().startsWith("/api/dev/core-sim/")))
             .httpBasic(b -> b.authenticationEntryPoint((req, res, e) -> error(res, json, 401, "UNAUTHENTICATED", "Sign in required")))
             .exceptionHandling(e -> e
                     .authenticationEntryPoint((req, res, ex) -> error(res, json, 401, "UNAUTHENTICATED", "Sign in required"))
                     .accessDeniedHandler((req, res, ex) -> error(res, json, 403, "FORBIDDEN", "Your role does not allow this")))
             .formLogin(f -> f.disable())
             .logout(l -> l.disable())
-            .addFilterBefore(new ApiKeyFilter(dexxisKey), BasicAuthenticationFilter.class)
+            .addFilterBefore(new ApiKeyFilter(List.of(
+                    new ApiKeyFilter.Rule("/api/dexxis/", dexxisKey, "DEXXIS"),
+                    new ApiKeyFilter.Rule("/api/channel/", channelKey, "CHANNEL"),
+                    new ApiKeyFilter.Rule("/api/dev/core-sim/", coreKey, "CORE"))), BasicAuthenticationFilter.class)
             .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
             .addFilterAfter(new PasswordChangeFilter(json), BasicAuthenticationFilter.class)
             .authorizeHttpRequests(a -> a
                     .requestMatchers("/", "/index.html", "/assets/**", "/favicon.svg", "/issuance.html").permitAll()
                     .requestMatchers("/api/version", "/api/admin/hsm/health", "/api/auth/login", "/api/auth/csrf").permitAll()
                     .requestMatchers("/api/dexxis/**").hasRole("DEXXIS")
+                    .requestMatchers("/api/channel/**").hasRole("CHANNEL")
+                    .requestMatchers("/api/dev/core-sim/**").hasAnyRole("CORE", "ADMIN", "SUPERVISOR", "OPERATOR")
                     .requestMatchers("/api/auth/**").authenticated()
                     .requestMatchers("/api/dev/**").hasAnyRole(WRITERS)
                     .requestMatchers("/api/admin/users/**").hasRole("ADMIN")

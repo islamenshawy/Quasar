@@ -15,31 +15,45 @@ import java.security.MessageDigest;
 import java.util.List;
 
 /**
- * Dexxis authenticates with the X-Api-Key header (cms.dexxis.api-key / CMS_DEXXIS_API_KEY).
- * Only /api/dexxis/** accepts it; the principal is "DEXXIS" with role DEXXIS. With no key
- * configured, Dexxis calls are refused. Network controls (mTLS / allow-list, CMS-062) still apply.
+ * System clients authenticate with the X-Api-Key header, one key per path prefix:
+ * <ul>
+ *   <li>/api/dexxis/   Dexxis kiosk            (cms.dexxis.api-key)        role DEXXIS</li>
+ *   <li>/api/channel/  ACS / mobile / IVR      (cms.channel.api-key)       role CHANNEL</li>
+ *   <li>/api/dev/core-sim/  the CMS calling its own dev core banking simulator (cms.core-banking.api-key) role CORE</li>
+ * </ul>
+ * A prefix with no key configured refuses API-key calls. Network controls (mTLS / allow-list, CMS-062) still apply.
  */
 final class ApiKeyFilter extends OncePerRequestFilter {
 
-    private final byte[] key;
+    record Rule(String prefix, String key, String principal) {
+        byte[] bytes() { return key == null || key.isBlank() ? null : key.getBytes(StandardCharsets.UTF_8); }
+    }
 
-    ApiKeyFilter(String key) {
-        this.key = key == null || key.isBlank() ? null : key.getBytes(StandardCharsets.UTF_8);
+    private final List<Rule> rules;
+
+    ApiKeyFilter(List<Rule> rules) {
+        this.rules = rules;
+    }
+
+    private Rule ruleFor(HttpServletRequest req) {
+        String uri = req.getRequestURI();
+        return rules.stream().filter(r -> uri.startsWith(r.prefix())).findFirst().orElse(null);
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest req) {
-        return !req.getRequestURI().startsWith("/api/dexxis/");
+        return ruleFor(req) == null;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
             throws ServletException, IOException {
+        Rule rule = ruleFor(req);
+        byte[] key = rule.bytes();
         String given = req.getHeader("X-Api-Key");
-        if (key != null && given != null
-                && MessageDigest.isEqual(key, given.getBytes(StandardCharsets.UTF_8))) {
+        if (key != null && given != null && MessageDigest.isEqual(key, given.getBytes(StandardCharsets.UTF_8))) {
             SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
-                    "DEXXIS", null, List.of(new SimpleGrantedAuthority("ROLE_DEXXIS"))));
+                    rule.principal(), null, List.of(new SimpleGrantedAuthority("ROLE_" + rule.principal()))));
         }
         chain.doFilter(req, res);
     }

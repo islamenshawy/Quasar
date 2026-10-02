@@ -3,6 +3,10 @@ package com.cms.batch;
 import com.cms.batch.BatchService.Result;
 import com.cms.card.CardIssuanceService;
 import com.cms.card.IssuanceException;
+import com.cms.core.CoreBankingClient;
+import com.cms.core.CoreBankingClient.Posting;
+import com.cms.core.CoreSafService;
+import com.cms.core.CoreSafService.SafPayload;
 import com.cms.ledger.LedgerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,13 +31,17 @@ public class CardLifecycleJobs {
     private final TransactionTemplate tx;
     private final CardIssuanceService issuance;
     private final LedgerService ledger;
+    private final CoreBankingClient core;
+    private final CoreSafService saf;
 
     public CardLifecycleJobs(BatchService batch, JdbcTemplate jdbc, PlatformTransactionManager txm,
-                             CardIssuanceService issuance, LedgerService ledger) {
+                             CardIssuanceService issuance, LedgerService ledger, CoreBankingClient core, CoreSafService saf) {
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(txm);
         this.issuance = issuance;
         this.ledger = ledger;
+        this.core = core;
+        this.saf = saf;
         batch.register("CARD_EXPIRY", this::expireCards);
         batch.register("CARD_RENEWAL", this::renewCards);
         batch.register("HOLD_EXPIRY", this::expireHolds);
@@ -98,10 +106,29 @@ public class CardLifecycleJobs {
         List<Long> ids = jdbc.queryForList("SELECT id FROM hold WHERE status = 'OPEN' AND expires_at < now() ORDER BY id", Long.class);
         int done = 0;
         for (Long id : ids) {
-            Boolean ok = tx.execute(s -> ledger.closeHold(id, "EXPIRED", 0, "hold expired", actor));
+            Boolean ok = tx.execute(s -> {
+                if (!ledger.closeHold(id, "EXPIRED", 0, "hold expired", actor)) return false;
+                releaseCoreHold(id);
+                return true;
+            });
             if (Boolean.TRUE.equals(ok)) done++;
         }
         return new Result(done, done + " hold(s) expired");
+    }
+
+    /** A hold on a core banking account is released in core too; queued when core does not answer. */
+    private void releaseCoreHold(long holdId) {
+        record H(String coreRef, long accountId, String accountNumber, String currency) {}
+        H h = jdbc.query("""
+                SELECT h.core_hold_ref, a.id, a.account_number, a.currency_code FROM hold h JOIN account a ON a.id = h.account_id
+                 WHERE h.id = ? AND h.core_hold_ref IS NOT NULL
+                """, rs -> rs.next() ? new H(rs.getString(1), rs.getLong(2), rs.getString(3), rs.getString(4)) : null, holdId);
+        if (h == null) return;
+        String ref = "X" + holdId;
+        if (!core.release(h.coreRef(), ref).approved()) {
+            saf.enqueue("RELEASE", null, h.accountId(), new SafPayload(new Posting(ref, h.accountNumber(), 0, 0, h.currency(),
+                    "RELEASE", "Hold expired", true, false), h.coreRef(), null));
+        }
     }
 
     /** Cards never printed within the product's limit are cancelled, so their numbers cannot be printed late. */

@@ -34,6 +34,7 @@ public final class ActionCode {
     public static final String FORMAT_ERROR = "904";
     public static final String ISSUER_INOPERATIVE = "907";
     public static final String SYSTEM_MALFUNCTION = "909";
+    public static final String ISSUER_TIMEOUT = "911";
 
     private static final Map<String, String> TEXT = Map.ofEntries(
             Map.entry(APPROVED, "Approved"),
@@ -59,7 +60,8 @@ public final class ActionCode {
             Map.entry(INVALID_TRANSACTION, "Invalid transaction"),
             Map.entry(FORMAT_ERROR, "Format error"),
             Map.entry(ISSUER_INOPERATIVE, "Issuer or switch inoperative"),
-            Map.entry(SYSTEM_MALFUNCTION, "System malfunction"));
+            Map.entry(SYSTEM_MALFUNCTION, "System malfunction"),
+            Map.entry(ISSUER_TIMEOUT, "Card issuer timed out"));
 
     public static boolean isApproval(String code) {
         return APPROVED.equals(code) || REVERSAL_ACCEPTED.equals(code);
