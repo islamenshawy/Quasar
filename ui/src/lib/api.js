@@ -74,7 +74,8 @@ async function request (method, path, body, { quiet = false } = {}) {
 export const api = {
   get: (p, o) => request('GET', p, undefined, o),
   post: (p, b, o) => request('POST', p, b ?? {}, o),
-  put: (p, b, o) => request('PUT', p, b, o)
+  put: (p, b, o) => request('PUT', p, b, o),
+  del: (p, o) => request('DELETE', p, undefined, o)
 }
 
 /** True when the response is a maker-checker request rather than the result. */

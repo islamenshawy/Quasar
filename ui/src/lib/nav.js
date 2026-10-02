@@ -26,6 +26,7 @@ export function navGroups ({ devTools = false, pending = 0, fraud = 0 } = {}) {
         { to: '/setup/fee-plans', label: 'Fee plans', icon: 'request_quote', keys: 'pricing charges annual monthly atm' },
         { to: '/setup/fx-rates', label: 'FX rates', icon: 'currency_exchange', keys: 'foreign exchange conversion markup' },
         { to: '/setup/fraud-rules', label: 'Fraud rules', icon: 'shield', keys: 'risk velocity mcc country score' },
+        { to: '/setup/message-templates', label: 'Message templates', icon: 'edit_note', keys: 'sms email text arabic notification' },
         { to: '/setup/numbering', label: 'Numbering & settings', icon: 'pin', keys: 'sequence cif settings country' }
       ]
     },
@@ -33,6 +34,7 @@ export function navGroups ({ devTools = false, pending = 0, fraud = 0 } = {}) {
       title: 'Control',
       items: [
         { to: '/core-banking', label: 'Core banking', icon: 'hub', keys: 'saf store forward stand-in stip host funds' },
+        { to: '/notifications', label: 'Notifications', icon: 'forum', keys: 'sms email otp messages alerts outbox' },
         { to: '/gl', label: 'GL accounts', icon: 'account_tree', keys: 'ledger general' },
         { to: '/batch', label: 'Batch jobs', icon: 'schedule', keys: 'scheduler renewal expiry' },
         { to: '/audit', label: 'Audit log', icon: 'history', keys: 'activity trail' },

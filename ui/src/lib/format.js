@@ -24,7 +24,12 @@ export function date (iso) {
 }
 
 /** PENDING_PRINT -> Pending print */
-export const label = code => code ? code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, ' ') : ''
+/** Codes whose generated label reads badly. */
+const LABELS = {
+  TXN_APPROVED: 'Transaction approved', TXN_DECLINED: 'Transaction declined', OTP: 'One-time password',
+  CONFIRMED_FRAUD: 'Fraud confirmed', FALSE_POSITIVE: 'Cleared (genuine)', ECOM: 'E-commerce', ATM: 'ATM', POS: 'POS'
+}
+export const label = code => code ? LABELS[code] || code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, ' ') : ''
 
 const COLORS = {
   OPEN: 'warning',

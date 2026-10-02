@@ -20,6 +20,7 @@
           <q-tab name="overview" label="Overview" />
           <q-tab name="accounts" :label="`Accounts (${accounts.length})`" />
           <q-tab name="cards" :label="`Cards (${cards.length})`" />
+          <q-tab name="alerts" label="Alerts" />
           <q-tab name="activity" label="Activity" />
         </q-tabs>
         <q-separator />
@@ -72,6 +73,9 @@
             </q-table>
           </q-tab-panel>
 
+          <q-tab-panel name="alerts">
+            <CustomerAlerts :customer-id="c.id" />
+          </q-tab-panel>
           <q-tab-panel name="activity" class="q-pa-none">
             <AuditTrail ref="trail" entity-type="customer" :entity-id="c.id" />
           </q-tab-panel>
@@ -92,6 +96,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import StatusAction from '../components/StatusAction.vue'
 import AuditTrail from '../components/AuditTrail.vue'
+import CustomerAlerts from '../components/CustomerAlerts.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import OpenAccountDialog from '../components/OpenAccountDialog.vue'
 import { api, pending } from '../lib/api.js'
