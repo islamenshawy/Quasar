@@ -15,6 +15,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | IN-03 | Who derives EMV ICC keys: Dexxis HSM from IMK, or CMS? | CMS-057, CMS-058 |
 | IN-04 | Track 2 discretionary data layout per product | CMS-059 |
 | IN-05 | payShield config: LMK type (variant/key block), header length, PIN block format | CMS-043 |
+| IN-06 | Core banking API spec: funds check / debit / hold / reverse, idempotency, error codes, timeouts; stand-in policy per product | CMS-090 |
 | IN-06 | Kiosk PIN entry key (TPK or ZPK) and format | CMS-044 |
 | IN-07 | Real segments, account types, products and eligibility matrix | CMS-045 |
 
@@ -103,6 +104,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-056 | SOAP endpoint from Dexxis WSDL | Blocked (IN-02) |
 | CMS-057 | ARQC verification / ARPC generation (KQ) + hsm-sim support | Done, provisional; confirm KQ layout, key ownership (IN-03) and CDOL1 per chip profile |
 | CMS-068 | Issuer scripts (PIN unblock / change on chip), CDA/DDA key management | Planned |
+| CMS-090 | Core banking funds interface, stand-in limit, store-and-forward queue and replay | Done, provisional contract (IN-06) |
 | CMS-058 | EMV data in perso response if CMS owns ICC key derivation | Blocked (IN-03) |
 | CMS-059 | Final track discretionary data per product | Blocked (IN-04) |
 

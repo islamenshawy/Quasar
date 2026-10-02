@@ -133,6 +133,20 @@ Dev profile (uses the dev time helpers to age cards and holds).
 | L24-L26 | Pre-auth hold expired; HOLD_EXPIRY | funds available again |
 | L27 | Job list | last runs recorded |
 
+## 3e. Core banking catalogue (`scripts/core-test.sh`)
+
+Runs against the DEV core banking simulator (`/api/dev/core-sim`); P02 card on a `CORE_CURRENT` account.
+
+| ID | Case | Expected |
+|---|---|---|
+| C00-C01 | Core connected; P02 card on a core account activated | up; ACTIVE |
+| C02-C08 | Balance inquiry, withdrawal, insufficient funds, reversal, pre-auth, capture, refund | balances are core's; 116 on insufficient funds; reversal restores core |
+| C09-C10 | Account blocked in core; live balance for the account page | 119; APPROVED with balance |
+| C11-C14 | Core down: balance inquiry, withdrawal within / over stand-in limit, reversal | 911; 000 stand-in; 911; 400 |
+| C15-C18 | Queue holds debit + reversal; replay while down retries the debit and keeps the reversal behind it; replay when back sends both in order | balance unchanged after replay |
+| C19-C22 | Stand-in purchase, cancel queued posting (maker-checker), replay | cancelled posting never reaches core |
+| C23-C24 | Nothing pending; manual ledger entry on a core account | refused (INVALID_REQUEST) |
+
 ## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |

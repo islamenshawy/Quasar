@@ -131,6 +131,9 @@ The CMS reads configuration from `application.yml`, from the active profile file
 | `CMS_ADMIN_PASSWORD` | first start | dev profile has its own users | Password of the bootstrap `admin` (must be changed at first sign-in). Empty = generated and written to the log once |
 | `CMS_DEXXIS_API_KEY` | TEST: yes | `dev-dexxis-key` | Key Dexxis sends in `X-Api-Key`. Empty = Dexxis calls refused. Long random value, e.g. `openssl rand -hex 32` |
 | `CMS_DEV_PASSWORD` | no | `Dev-Passw0rd!` | DEV only: password of the dev users admin, supervisor, supervisor2, operator, viewer |
+| `CMS_CORE_BANKING_URL` | for core accounts | dev: in-process simulator | Base URL of the core banking funds API (provisional contract, IN-06). Empty = not connected: cards on `CORE_BANKING` accounts approve only within their stand-in limit |
+| `CMS_CORE_BANKING_API_KEY` / `CMS_CORE_BANKING_TIMEOUT_MS` | no | `dev-core-key` / `3000` | Sent as `X-Api-Key`; timeout per call (the switch waits for the answer, keep it well under the switch timeout) |
+| `CMS_CHANNEL_API_KEY` | no | `dev-channel-key` | Key for `/api/channel/**` (ACS, mobile, IVR). Empty = refused |
 | `CMS_ISO_PORT` / `CMS_ISO_ENABLED` | no | `7000` / `true` | BASE24 switch interface. Also `cms.iso.length-prefix` (BINARY2 / ASCII4) and `cms.iso.header-length`; set them from the BASE24 spec |
 
 > **Important:** the PAN keys encrypt card numbers at rest. If you change them, existing cards can no longer be decrypted. On TEST, generate them once (`openssl rand -base64 32`), store them in the env file (§9.2), and never rotate them casually.
@@ -274,6 +277,7 @@ Run these checks in order. Each must pass before moving to the next.
 | 5b | BASE24 interface (DEV only) | `./scripts/iso-test.sh` | `22 passed, 0 failed` |
 | 5c | Security (DEV only) | `./scripts/security-test.sh` | `30 passed, 0 failed` |
 | 5d | Card lifecycle (DEV only) | `./scripts/lifecycle-test.sh` | `27 passed, 0 failed` |
+| 5e | Core banking (DEV only) | `./scripts/core-test.sh` | `25 passed, 0 failed` |
 | 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
 If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
@@ -412,6 +416,7 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 - **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
 - **V6 (users, roles, maker-checker):** on the first start after upgrading, the CMS creates `admin` (see §6.2). Give Dexxis the API key (`CMS_DEXXIS_API_KEY`) **before** upgrading, or perso and activation calls fail with 401. Update any script that called the admin API to sign in (HTTP Basic) and to handle 202 approval responses.
 - **V7 (card lifecycle, batch):** the batch scheduler starts with the CMS. Review **Control → Batch jobs** after the upgrade: CARD_RENEWAL will create renewal cards for every live card expiring within its product's lead days (default 30) at 01:00, and STALE_PENDING_PRINT cancels cards not printed within 30 days. Switch a job off, or change the product settings, before the first night if that is not wanted. To stop all scheduled runs on an instance set `cms.batch.scheduler-enabled=false`.
+- **V9 (core banking):** no change for existing accounts (all `CMS_LEDGER`). To use core banking accounts, set `CMS_CORE_BANKING_URL` (and key), create an account type with ledger mode `CORE_BANKING`, and set each product's stand-in limit. Watch Control → Core banking for failed postings. On DEV, rerun `scripts/seed-dev.sql` (adds `CORE_CURRENT`).
 - **V8 (EMV):** chip cryptograms are checked only for products with an IMK-AC key. On DEV, rerun `scripts/seed-dev.sql` (adds IMK_AC_P01 and links P01/P02) and restart hsm-sim so it runs **1.1.0** (`java hsm-sim/HsmSimulator.java selftest` must list the KQ cases). On a real payShield, import the issuer IMK-AC and confirm the KQ layout before enabling it on a product.
 - Admin API changes for any script that calls it: `GET /api/admin/customers` returns a page `{items, total, page, size}`, and `/api/admin/reference` returns full objects (see CHANGELOG, **Breaking**).
 
