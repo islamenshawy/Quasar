@@ -115,11 +115,11 @@ const form = reactive({
   pinTryLimit: 3, dailyWdCount: 10, dailyWdAmount: null, perTxnWdMax: null, maxCardsPerAccount: 1, active: true,
   // usage settings (flattened here, nested as "usage" in the API)
   atmEnabled: true, posEnabled: true, ecomEnabled: false, dailyPosCount: 20, dailyPosAmount: null, perTxnPosMax: null,
-  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7,
+  wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7, coreStipLimit: 0,
   autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30,
   emvScheme: 'EMV_CSK', emvDataList: '9F02,9F03,9F1A,95,5F2A,9A,9C,9F37,82,9F36,9F10:CVR'
 })
-const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee']
+const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee', 'coreStipLimit']
 
 const exponent = computed(() => currencies.value.find(c => c.code === form.currencyCode)?.exponent ?? 2)
 const keyOptions = type => keys.value.filter(k => k.keyType === type).map(k => ({ label: `${k.keyName} · KCV ${k.kcv}`, value: k.keyName }))
@@ -206,6 +206,9 @@ const sections = computed(() => [
       { name: 'wdFee', label: 'ATM withdrawal fee', type: 'number', required: true, step: 'any', prefix: form.currencyCode, rules: [v => v >= 0 || '≥ 0'] },
       { name: 'biFee', label: 'Balance inquiry fee', type: 'number', required: true, step: 'any', prefix: form.currencyCode, rules: [v => v >= 0 || '≥ 0'] },
       { name: 'preauthHoldDays', label: 'Pre-auth hold', type: 'number', required: true, suffix: 'days', rules: [v => (v >= 1 && v <= 45) || '1 to 45'] },
+      { name: 'coreStipLimit', label: 'Core banking stand-in limit', type: 'number', required: true, step: 'any', prefix: form.currencyCode,
+        hint: 'Cards on core banking accounts: approve up to this per transaction while core does not answer (0 = decline 911)',
+        col: 'col-12 col-sm-8', rules: [v => v >= 0 || '≥ 0'] },
       { name: 'verifyCvv', label: 'Verify CVV / iCVV from track 2 (needs the final track layout, IN-04)', type: 'toggle', col: 'col-12' }
     ]
   },

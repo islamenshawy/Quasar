@@ -22,6 +22,7 @@ const routes = [
       { path: 'transactions', name: 'transactions', component: () => import('./pages/TransactionsPage.vue'), meta: { title: 'Transactions' } },
       { path: 'approvals', name: 'approvals', component: () => import('./pages/ApprovalsPage.vue'), meta: { title: 'Approvals' } },
       { path: 'switch-simulator', name: 'switch-sim', component: () => import('./pages/SwitchSimulatorPage.vue'), meta: { title: 'Switch simulator', role: 'write' } },
+      { path: 'core-banking', name: 'core-banking', component: () => import('./pages/CoreBankingPage.vue'), meta: { title: 'Core banking' } },
       { path: 'gl', name: 'gl', component: () => import('./pages/GlPage.vue'), meta: { title: 'GL accounts' } },
       { path: 'batch', name: 'batch', component: () => import('./pages/BatchJobsPage.vue'), meta: { title: 'Batch jobs' } },
       { path: 'audit', name: 'audit', component: () => import('./pages/AuditPage.vue'), meta: { title: 'Audit log' } },

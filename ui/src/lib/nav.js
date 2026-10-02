@@ -28,6 +28,7 @@ export function navGroups ({ devTools = false, pending = 0 } = {}) {
     {
       title: 'Control',
       items: [
+        { to: '/core-banking', label: 'Core banking', icon: 'hub', keys: 'saf store forward stand-in stip host funds' },
         { to: '/gl', label: 'GL accounts', icon: 'account_tree', keys: 'ledger general' },
         { to: '/batch', label: 'Batch jobs', icon: 'schedule', keys: 'scheduler renewal expiry' },
         { to: '/audit', label: 'Audit log', icon: 'history', keys: 'activity trail' },

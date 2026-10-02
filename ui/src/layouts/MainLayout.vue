@@ -17,6 +17,9 @@
 
         <div class="qz-pulse gt-xs" role="status" aria-label="System status">
           <span class="qz-pill gt-sm"><span class="qz-dot" :class="iso.tone" />Switch {{ iso.label }}<q-tooltip>{{ iso.detail }}</q-tooltip></span>
+          <router-link v-if="coreHost.shown" to="/core-banking" class="qz-pill clickable gt-sm" style="text-decoration: none">
+            <span class="qz-dot" :class="coreHost.tone" />Core {{ coreHost.label }}<q-tooltip>{{ coreHost.detail }}</q-tooltip>
+          </router-link>
           <span class="qz-pill clickable" role="button" tabindex="0" @click="checkHsm" @keyup.enter="checkHsm">
             <span class="qz-dot" :class="hsm.tone" />HSM {{ hsm.status }}<q-tooltip>{{ hsm.detail }} · click to recheck</q-tooltip>
           </span>
@@ -128,6 +131,7 @@ const cmd = ref(false)
 const version = reactive({})
 const hsm = reactive({ status: '…', tone: '', detail: 'Checking' })
 const iso = reactive({ label: '…', tone: '', detail: 'Checking' })
+const coreHost = reactive({ shown: false, label: '…', tone: '', detail: 'Checking' })
 const devTools = ref(false)
 const pendingApprovals = ref(0)
 
@@ -174,6 +178,20 @@ async function checkIso () {
   }
 }
 
+async function checkCore () {
+  try {
+    const s = await api.get('/admin/core-banking/status', { quiet: true })
+    const queued = (s.queue?.PENDING ?? 0) + (s.queue?.FAILED ?? 0)
+    Object.assign(coreHost, {
+      shown: s.configured || s.coreAccounts > 0,
+      label: !s.configured ? 'OFF' : s.up ? (queued ? `UP · ${queued} queued` : 'UP') : 'DOWN',
+      tone: s.up ? (s.queue?.FAILED ? 'bad' : 'ok') : 'bad',
+      detail: s.up ? `Answered in ${s.latencyMs} ms · ${s.queue?.PENDING ?? 0} pending, ${s.queue?.FAILED ?? 0} failed`
+        : `${s.reason || 'Not reachable'} · stand-in limits apply`
+    })
+  } catch { coreHost.shown = false }
+}
+
 function toggleDark () {
   $q.dark.toggle()
   try { localStorage.setItem('cms.dark', String($q.dark.isActive)) } catch { /* ignore */ }
@@ -203,8 +221,9 @@ onMounted(async () => {
   checkHsm()
   checkIso()
   checkApprovals()
+  checkCore()
   api.get('/dev/iso/status', { quiet: true }).then(() => { devTools.value = true }).catch(() => {})
-  timer = setInterval(() => { checkHsm(); checkIso(); checkApprovals() }, 30000)
+  timer = setInterval(() => { checkHsm(); checkIso(); checkApprovals(); checkCore() }, 30000)
 })
 onBeforeUnmount(() => clearInterval(timer))
 </script>
