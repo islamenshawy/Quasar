@@ -116,8 +116,8 @@ auth PURCHASE ECOM 1000 "";                  expect "A24 card e-com on, product 
 post /api/admin/cards/$CARD/status '{"status":"BLOCKED","reason":"test"}' >/dev/null
 auth BALANCE_INQUIRY ATM 0 "$PIN_OK";        expect "A25 blocked card -> 104" "$R" .actionCode 104
 auth WITHDRAWAL ATM 1000 "" '{"advice":true,"mti":"1220"}'; expect "A26 stand-in advice posts anyway" "$R" .actionCode 000
-CCY=840; auth WITHDRAWAL ATM 1000 "" '{"advice":true,"mti":"1220"}'; CCY=$EGP
-expect "A26b foreign-currency advice acknowledged, not posted" "$R" '.actionCode + " " + (.reason|startswith("NOT POSTED")|tostring)' "000 true"
+CCY=784; auth WITHDRAWAL ATM 1000 "" '{"advice":true,"mti":"1220"}'; CCY=$EGP
+expect "A26b advice in a currency without an FX rate (AED) acknowledged, not posted" "$R" '.actionCode + " " + (.reason|startswith("NOT POSTED")|tostring)' "000 true"
 post /api/admin/cards/$CARD/status '{"status":"ACTIVE","reason":"test done"}' >/dev/null
 for i in 1 2; do auth BALANCE_INQUIRY ATM 0 "$PIN_BAD" >/dev/null; done
 auth BALANCE_INQUIRY ATM 0 "$PIN_BAD";       expect "A27 third wrong PIN blocks -> 106" "$R" .actionCode 106
