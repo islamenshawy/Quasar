@@ -11,6 +11,7 @@ import com.cms.common.Settings;
 import com.cms.core.CoreSafService;
 import com.cms.fee.FeeService;
 import com.cms.fraud.FraudService;
+import com.cms.notify.NotificationService;
 import com.cms.customer.CustomerService;
 import com.cms.ledger.LedgerService;
 import com.cms.reference.ReferenceDataService;
@@ -46,11 +47,13 @@ public class ApprovalActions {
     public record AlertResolve(long id, FraudService.Resolution resolution) {}
     public record FeePlanSave(String code, boolean create, FeeService.FeePlan plan) {}
     public record FxRateSave(FeeService.FxRate rate) {}
+    public record TemplateSave(NotificationService.Template template) {}
 
     public ApprovalActions(ApprovalService approvals, ReferenceDataService ref, Settings settings,
                            LedgerService ledger, CardAdminService cards, CustomerService customers,
                            AccountService accounts, AuditLog audit, CardIssuanceService issuance, BatchService batch,
-                           CoreSafService saf, FraudService fraud, FeeService fees) {
+                           CoreSafService saf, FraudService fraud, FeeService fees,
+                           NotificationService notifications) {
         approvals.register("CURRENCY_SAVE", CurrencySave.class, (p, op) -> ref.saveCurrency(p.code(), p.data(), p.create(), op));
         approvals.register("SEGMENT_SAVE", SegmentSave.class, (p, op) -> ref.saveSegment(p.code(), p.data(), p.create(), op));
         approvals.register("ACCOUNT_TYPE_SAVE", AccountTypeSave.class, (p, op) -> ref.saveAccountType(p.code(), p.data(), p.create(), op));
@@ -91,5 +94,6 @@ public class ApprovalActions {
         approvals.register("FRAUD_ALERT_RESOLVE", AlertResolve.class, (p, op) -> fraud.resolve(p.id(), p.resolution(), op));
         approvals.register("FEE_PLAN_SAVE", FeePlanSave.class, (p, op) -> fees.savePlan(p.code(), p.create(), p.plan(), op));
         approvals.register("FX_RATE_SAVE", FxRateSave.class, (p, op) -> fees.saveFxRate(p.rate(), op));
+        approvals.register("NOTIFICATION_TEMPLATE_SAVE", TemplateSave.class, (p, op) -> notifications.saveTemplate(p.template(), op));
     }
 }

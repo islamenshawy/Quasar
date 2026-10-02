@@ -38,6 +38,22 @@ cms:
     api-key: ${CMS_DEXXIS_API_KEY:}   # X-Api-Key Dexxis must send; empty = Dexxis calls refused
   channel:
     api-key: ${CMS_CHANNEL_API_KEY:}  # X-Api-Key for /api/channel (ACS, mobile, IVR); empty = refused
+  notify:                             # customer SMS / e-mail (CMS-105); gateways provisional (IN-07)
+    poll-ms: 5000
+    sms:
+      provider: ${CMS_SMS_PROVIDER:HTTP}           # HTTP or LOG (nothing sent)
+      url: ${CMS_SMS_URL:}
+      api-key: ${CMS_SMS_API_KEY:}
+      sender: ${CMS_SMS_SENDER:BANK}
+    email:
+      provider: ${CMS_EMAIL_PROVIDER:HTTP}
+      url: ${CMS_EMAIL_URL:}
+      api-key: ${CMS_EMAIL_API_KEY:}
+      sender: ${CMS_EMAIL_SENDER:no-reply@bank.local}
+  otp:
+    ttl-seconds: 300
+    max-attempts: 3
+    max-per-window: 3                 # codes per card per 10 minutes
   core-banking:                       # funds interface for CORE_BANKING accounts (CMS-090, provisional IN-06)
     base-url: ${CMS_CORE_BANKING_URL:}          # empty = not connected: core accounts decline (stand-in limit aside)
     api-key: ${CMS_CORE_BANKING_API_KEY:}

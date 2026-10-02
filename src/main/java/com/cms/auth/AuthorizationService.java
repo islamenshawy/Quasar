@@ -9,6 +9,7 @@ import com.cms.common.Settings;
 import com.cms.emv.EmvService;
 import com.cms.fee.FeeService;
 import com.cms.fraud.FraudService;
+import com.cms.notify.NotificationService;
 import com.cms.card.Luhn;
 import com.cms.hsm.HsmException;
 import com.cms.hsm.PayShieldClient;
@@ -34,6 +35,7 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.cms.auth.ActionCode.*;
@@ -69,6 +71,7 @@ public class AuthorizationService {
     private final CoreSafService saf;
     private final FraudService fraud;
     private final FeeService fees;
+    private final NotificationService notifications;
     private final Settings settings;
     private final String acquirerZpkName;
     private final PinBlockFormat pinBlockFormat;
@@ -76,6 +79,7 @@ public class AuthorizationService {
     public AuthorizationService(JdbcTemplate jdbc, PlatformTransactionManager txm, PanCrypto panCrypto,
                                 PinService pins, PayShieldClient hsm, KeyRepository keys, LedgerService ledger,
                                 EmvService emvService, CoreBankingClient core, CoreSafService saf, FraudService fraud, FeeService fees, Settings settings,
+                                NotificationService notifications,
                                 @Value("${cms.keys.corehost-zpk-name}") String acquirerZpkName,
                                 @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -90,6 +94,7 @@ public class AuthorizationService {
         this.saf = saf;
         this.fraud = fraud;
         this.fees = fees;
+        this.notifications = notifications;
         this.settings = settings;
         this.acquirerZpkName = acquirerZpkName;
         this.pinBlockFormat = pinBlockFormat;
@@ -135,7 +140,11 @@ public class AuthorizationService {
         jdbc.update("UPDATE iso_transaction SET card_id = ?, account_id = ? WHERE id = ?", c.cardId, c.accountId, txnId);
 
         String fxRefusal = price(r, c, txnId);
-        if (r.advice()) return advice(r, c, txnId);
+        if (r.advice()) {
+            AuthResponse a = advice(r, c, txnId);
+            notifyOutcome(r, c, txnId, a);
+            return a;
+        }
 
         String d = checkCardAndAccount(r, c);
         if (d != null) return finish(txnId, d, reasonOf(d, c), c);
@@ -156,6 +165,7 @@ public class AuthorizationService {
             jdbc.update("UPDATE card SET last_atc = ? WHERE id = ?", emv.atc(), c.cardId);
         }
         AuthResponse resp = decide(r, c, txnId);
+        notifyOutcome(r, c, txnId, resp);
         return emv == null ? resp : resp.withIcc(emvService.responseTlv(emv, resp.approved()));
     }
 
@@ -190,6 +200,7 @@ public class AuthorizationService {
         if (c.fraudExemptUntil != null && c.fraudExemptUntil.isAfter(OffsetDateTime.now())) return null;
         FraudService.Verdict v = fraud.evaluate(new FraudService.Screened(txnId, c.cardId, c.productCode, c.cardCreatedAt,
                 r.type().name(), r.channel().name(), c.amt, r.merchantType(), r.acquirerCountry()), adviceOnly);
+        if (!"NONE".equals(v.action())) c.fraudAlerted = true;
         if (!v.declines()) return null;
         if (v.blocks() && "ACTIVE".equals(c.status)) {
             jdbc.update("UPDATE card SET status = 'BLOCKED', version = version + 1 WHERE id = ?", c.cardId);
@@ -239,6 +250,34 @@ public class AuthorizationService {
             case PIN_CHANGE -> "PIN_CHANGE";
             default -> null;
         };
+    }
+
+    /** Declines the customer hears about (others are usually technical or terminal-side). */
+    private static final java.util.Set<String> NOTIFIED_DECLINES = java.util.Set.of(
+            INSUFFICIENT_FUNDS, INCORRECT_PIN, PIN_TRIES_EXCEEDED, EXCEEDS_AMOUNT_LIMIT, EXCEEDS_FREQUENCY_LIMIT, SUSPECTED_FRAUD);
+
+    /**
+     * Customer messages (CMS-105), queued in this transaction: approvals of money movements (subject to the customer's
+     * minimum amount), selected declines, and a security alert when a fraud rule matched.
+     */
+    private void notifyOutcome(AuthRequest r, Ctx c, long txnId, AuthResponse resp) {
+        if (!hasAmount(r.type())) return;
+        String ccy = r.currencyNumeric() == null ? c.currency : jdbc.query("SELECT code FROM currency WHERE numeric_code = ?",
+                rs -> rs.next() ? rs.getString(1) : c.currency, r.currencyNumeric());
+        Map<String, String> vars = new java.util.HashMap<>();
+        vars.put("amount", notifications.money(r.amount(), ccy));
+        vars.put("currency", ccy);
+        vars.put("merchant", r.cardAcceptor() != null && !r.cardAcceptor().isBlank() ? r.cardAcceptor().trim()
+                : r.channel() == Channel.ATM ? "ATM " + r.terminalId() : r.terminalId());
+        vars.put("balance", resp.availableBalance() == null ? "-" : notifications.money(resp.availableBalance(), c.currency) + " " + c.currency);
+        vars.put("reason", ActionCode.text(resp.actionCode()));
+        if (c.fraudAlerted) {
+            notifications.enqueue("FRAUD_ALERT", c.cardId, txnId, vars, c.amt);
+        } else if (resp.approved()) {
+            notifications.enqueue("TXN_APPROVED", c.cardId, txnId, vars, c.amt);
+        } else if (NOTIFIED_DECLINES.contains(resp.actionCode())) {
+            notifications.enqueue("TXN_DECLINED", c.cardId, txnId, vars, c.amt);
+        }
     }
 
     /** Transaction fee and FX markup as separate journals (CMS ledger accounts). */
@@ -341,6 +380,7 @@ public class AuthorizationService {
                     INSERT INTO card_status_history (card_id, old_status, new_status, reason, changed_by)
                     VALUES (?, 'ACTIVE', 'PIN_BLOCKED', ?, ?)
                     """, c.cardId, "PIN tries exhausted (" + tries + ")", SYSTEM_ACTOR);
+            notifications.enqueue("CARD_STATUS", c.cardId, null, Map.of("status", "PIN blocked"), 0);
             return PIN_TRIES_EXCEEDED;
         }
         jdbc.update("UPDATE card SET pin_tries = ? WHERE id = ?", tries, c.cardId);
@@ -898,7 +938,7 @@ public class AuthorizationService {
         // priced per request by price(): amount in the account currency, fees, FX
         long amt, fee, fxFee;
         BigDecimal fxRate;
-        boolean international, noRate;
+        boolean international, noRate, fraudAlerted;
     }
 
     private static final String CTX_SELECT = """

@@ -1,6 +1,7 @@
 package com.cms.card;
 
 import com.cms.common.AuditLog;
+import com.cms.notify.NotificationService;
 import com.cms.common.Page;
 import com.cms.security.PanCrypto;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -59,11 +60,13 @@ public class CardAdminService {
     private final JdbcTemplate jdbc;
     private final PanCrypto panCrypto;
     private final AuditLog audit;
+    private final NotificationService notifications;
 
-    public CardAdminService(JdbcTemplate jdbc, PanCrypto panCrypto, AuditLog audit) {
+    public CardAdminService(JdbcTemplate jdbc, PanCrypto panCrypto, AuditLog audit, NotificationService notifications) {
         this.jdbc = jdbc;
         this.panCrypto = panCrypto;
         this.audit = audit;
+        this.notifications = notifications;
     }
 
     public CardView get(long id) {
@@ -161,6 +164,7 @@ public class CardAdminService {
                 """, id, r.status(), status, reason.trim(), operator);
         audit.record(operator, "CARD_STATUS", "card", id,
                 Map.of("from", r.status(), "to", status, "reason", reason.trim()));
+        notifications.enqueue("CARD_STATUS", id, null, Map.of("status", status.replace('_', ' ').toLowerCase()), 0);
         return get(id);
     }
 

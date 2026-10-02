@@ -13,6 +13,12 @@ cms:
     api-key: ${CMS_DEXXIS_API_KEY:dev-dexxis-key}
   channel:
     api-key: ${CMS_CHANNEL_API_KEY:dev-channel-key}
+  notify:                             # DEV: nothing leaves the CMS; see /api/dev/notifications/sink
+    poll-ms: 2000
+    sms:
+      provider: ${CMS_SMS_PROVIDER:LOG}
+    email:
+      provider: ${CMS_EMAIL_PROVIDER:LOG}
   core-banking:                       # the in-process core banking simulator (/api/dev/core-sim)
     base-url: ${CMS_CORE_BANKING_URL:http://localhost:${server.port:8080}/api/dev/core-sim}
     api-key: ${CMS_CORE_BANKING_API_KEY:dev-core-key}
