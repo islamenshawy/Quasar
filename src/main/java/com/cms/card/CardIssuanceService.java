@@ -1,5 +1,6 @@
 package com.cms.card;
 
+import com.cms.fee.FeeService;
 import com.cms.hsm.PayShieldClient;
 import com.cms.hsm.PayShieldClient.PinBlockFormat;
 import com.cms.hsm.PinService;
@@ -74,9 +75,10 @@ public class CardIssuanceService {
     private final KeyRepository keys;
     private final String kioskZpkName;
     private final PinBlockFormat pinBlockFormat;
+    private final FeeService fees;
 
     public CardIssuanceService(JdbcTemplate jdbc, PanAllocator panAllocator, PanCrypto panCrypto,
-                               PayShieldClient hsm, PinService pinService, KeyRepository keys,
+                               PayShieldClient hsm, PinService pinService, KeyRepository keys, FeeService fees,
                                @Value("${cms.keys.kiosk-zpk-name}") String kioskZpkName,
                                @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -87,6 +89,7 @@ public class CardIssuanceService {
         this.keys = keys;
         this.kioskZpkName = kioskZpkName;
         this.pinBlockFormat = pinBlockFormat;
+        this.fees = fees;
     }
 
     private record Product(long id, String code, String serviceCode, int validityMonths,
@@ -143,6 +146,7 @@ public class CardIssuanceService {
 
         history(cardId, null, "PENDING_PRINT", "issued", operator);
         audit(operator, "ISSUE_CARD", "card", cardId, "{\"product\":\"" + p.code() + "\"}");
+        fees.chargeCardEvent(cardId, "ISSUANCE", "ONCE", operator);
 
         return new IssuedCard(cardId, pan, PanCrypto.mask(pan), expiry, p.code(), "PENDING_PRINT");
     }
@@ -369,6 +373,7 @@ public class CardIssuanceService {
                 o.ecom(), o.wdCount(), o.wdAmount(), o.wdPer(), o.posCount(), o.posAmount(), o.posPer());
 
         history(cardId, null, "PENDING_PRINT", reason.toLowerCase() + " of card " + oldCardId, operator);
+        fees.chargeCardEvent(cardId, "RENEWAL".equals(reason) ? "RENEWAL" : "REPLACEMENT", "ONCE", operator);
         audit(operator, "REPLACE_CARD", "card", cardId,
                 "{\"replaces\":" + oldCardId + ",\"reason\":\"" + reason + "\",\"samePan\":" + samePan + "}");
         String productCode = jdbc.queryForObject("SELECT code FROM card_product WHERE id = ?", String.class, o.productId());

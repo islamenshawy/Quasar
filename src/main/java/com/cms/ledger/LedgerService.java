@@ -30,6 +30,7 @@ public class LedgerService {
         ATM_CASH("ATM cash dispensed (own network)", "ASSET"),
         POS_SETTLEMENT("Merchant settlement (on-us POS)", "LIABILITY"),
         FEE_INCOME("Card fee income", "INCOME"),
+        FX_INCOME("FX markup income", "INCOME"),
         TOPUP_SUSPENSE("Account funding suspense", "SUSPENSE"),
         ADJUSTMENT("Manual adjustments", "SUSPENSE");
 

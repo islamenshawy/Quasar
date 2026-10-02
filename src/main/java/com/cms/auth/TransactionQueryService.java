@@ -24,7 +24,9 @@ public class TransactionQueryService {
                           String actionText, boolean approved, String authId, String declineReason, String stan,
                           String rrn, String terminalId, String acquirerId, String merchantType, String cardAcceptor,
                           boolean advice, boolean reversed, Long amountCompleted, String originalKey,
-                          Long ledgerAfter, Long availableAfter, OffsetDateTime receivedAt, OffsetDateTime respondedAt) {}
+                          Long ledgerAfter, Long availableAfter, OffsetDateTime receivedAt, OffsetDateTime respondedAt,
+                          Long billingAmount, String billingCurrency, java.math.BigDecimal fxRate, Long fxFee,
+                          String acquirerCountry, Integer fraudScore, String fraudRules, boolean standIn, String coreRef) {}
 
     private static final String SELECT = """
             SELECT t.id, t.mti, t.txn_type, t.channel,
@@ -34,7 +36,9 @@ public class TransactionQueryService {
                    t.amount, COALESCE(t.currency_code, a.currency_code), COALESCE(cur.exponent, 2), t.fee_amount,
                    t.action_code, t.auth_id, t.decline_reason, t.stan, t.rrn, t.terminal_id, t.acquirer_id,
                    t.merchant_type, t.card_acceptor, t.is_advice, t.reversed, t.amount_completed, t.original_key,
-                   t.ledger_after, t.available_after, t.received_at, t.responded_at
+                   t.ledger_after, t.available_after, t.received_at, t.responded_at,
+                   t.billing_amount, t.billing_currency, t.fx_rate, t.fx_fee, t.acquirer_country, t.fraud_score, t.fraud_rules,
+                   t.stand_in, t.core_ref
               FROM iso_transaction t
               LEFT JOIN card k          ON k.id = t.card_id
               LEFT JOIN card_product p  ON p.id = k.product_id
@@ -115,6 +119,9 @@ public class TransactionQueryService {
                 rs.getString(17), rs.getString(18), rs.getString(19), rs.getString(20), rs.getString(21),
                 rs.getString(22), rs.getString(23), rs.getBoolean(24), rs.getBoolean(25), (Long) rs.getObject(26),
                 rs.getString(27), (Long) rs.getObject(28), (Long) rs.getObject(29),
-                rs.getObject(30, OffsetDateTime.class), rs.getObject(31, OffsetDateTime.class));
+                rs.getObject(30, OffsetDateTime.class), rs.getObject(31, OffsetDateTime.class),
+                (Long) rs.getObject(32), rs.getString(33),
+                rs.getBigDecimal(34) == null ? null : rs.getBigDecimal(34).stripTrailingZeros(), (Long) rs.getObject(35),
+                rs.getString(36), (Integer) rs.getObject(37), rs.getString(38), rs.getBoolean(39), rs.getString(40));
     }
 }
