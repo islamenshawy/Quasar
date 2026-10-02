@@ -106,6 +106,8 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-068 | Issuer scripts (PIN unblock / change on chip), CDA/DDA key management | Planned |
 | CMS-090 | Core banking funds interface, stand-in limit, store-and-forward queue and replay | Done, provisional contract (IN-06) |
 | CMS-095 | Fraud and risk rules, scoring, alert queue and case outcomes | Done; thresholds of the starter rules to be agreed with the fraud team before activation |
+| CMS-100 | Fee plans, card event and periodic fees, FX conversion and markup | Done |
+| CMS-101 | FX rates feed from treasury (file or API) instead of manual entry | Planned |
 | CMS-096 | Fraud scoring model / external fraud engine hook, cardholder confirmation by SMS | Planned (after CMS-105) |
 | CMS-058 | EMV data in perso response if CMS owns ICC key derivation | Blocked (IN-03) |
 | CMS-059 | Final track discretionary data per product | Blocked (IN-04) |

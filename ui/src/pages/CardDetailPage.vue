@@ -60,6 +60,7 @@
       <q-card flat bordered class="q-mt-md">
         <q-tabs v-model="tab" align="left" no-caps active-color="primary" indicator-color="primary" dense class="q-px-sm">
           <q-tab name="transactions" label="Transactions" />
+          <q-tab name="fees" :label="`Fees${fees.items?.length ? ' (' + fees.items.length + ')' : ''}`" @click="loadFees" />
           <q-tab name="history" label="Status history" />
           <q-tab name="activity" label="Activity" />
         </q-tabs>
@@ -67,6 +68,15 @@
         <q-tab-panels v-model="tab" animated>
           <q-tab-panel name="transactions" class="q-pa-none">
             <TxnTable :filters="{ cardId: k.id }" :hide="['card']" />
+          </q-tab-panel>
+          <q-tab-panel name="fees" class="q-pa-none">
+            <q-table flat :rows="fees.items || []" :columns="feeColumns" row-key="id" hide-pagination :pagination="{ rowsPerPage: 0 }"
+                     no-data-label="No card fees charged (transaction fees show on each transaction)">
+              <template #bottom-row>
+                <q-tr v-if="fees.items?.length"><q-td colspan="3" class="text-weight-medium">Total</q-td>
+                  <q-td class="text-right mono text-weight-medium">{{ money(fees.total, 2) }}</q-td><q-td colspan="2" /></q-tr>
+              </template>
+            </q-table>
           </q-tab-panel>
           <q-tab-panel name="history">
             <q-timeline color="primary" layout="dense">
@@ -116,8 +126,20 @@ import ReplaceCardDialog from '../components/ReplaceCardDialog.vue'
 import TxnTable from '../components/TxnTable.vue'
 import { api, pending } from '../lib/api.js'
 import { can } from '../lib/session.js'
-import { dateTime, expiry, label, statusColor } from '../lib/format.js'
+import { dateTime, expiry, label, money, statusColor } from '../lib/format.js'
 
+const fees = ref({})
+const feeColumns = [
+  { name: 'createdAt', label: 'Charged', field: 'createdAt', format: v => new Date(v).toLocaleString(), align: 'left' },
+  { name: 'event', label: 'Fee', field: r => (r.event.charAt(0) + r.event.slice(1).toLowerCase()).replace(/_/g, ' '), align: 'left' },
+  { name: 'period', label: 'Period', field: r => r.period === 'ONCE' ? '—' : r.period, align: 'left' },
+  { name: 'amount', label: 'Amount', field: r => (r.amount / 100).toFixed(2) + ' ' + r.currencyCode, align: 'right', classes: 'mono' },
+  { name: 'queued', label: '', field: r => r.queued ? 'queued for core banking' : '', align: 'left' },
+  { name: 'createdBy', label: 'By', field: 'createdBy', align: 'left' }
+]
+async function loadFees () {
+  fees.value = await api.get(`/admin/cards/${props.id}/fees`)
+}
 const $q = useQuasar()
 
 const props = defineProps({ id: { type: String, required: true } })

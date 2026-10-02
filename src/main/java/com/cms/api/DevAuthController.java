@@ -39,6 +39,8 @@ public class DevAuthController {
         if (body.get("expiry") != null) jdbc.update("UPDATE card SET expiry_yymm = ? WHERE id = ?", String.valueOf(body.get("expiry")), id);
         if (body.get("createdDaysAgo") != null) jdbc.update("UPDATE card SET created_at = now() - make_interval(days => ?) WHERE id = ?",
                 ((Number) body.get("createdDaysAgo")).intValue(), id);
+        if (body.get("activatedDaysAgo") != null) jdbc.update("UPDATE card SET activated_at = now() - make_interval(days => ?) WHERE id = ?",
+                ((Number) body.get("activatedDaysAgo")).intValue(), id);
         return jdbc.queryForMap("SELECT id, expiry_yymm, created_at, status FROM card WHERE id = ?", id);
     }
 

@@ -23,6 +23,8 @@ export function navGroups ({ devTools = false, pending = 0, fraud = 0 } = {}) {
         { to: '/setup/account-types', label: 'Account types', icon: 'category' },
         { to: '/setup/segments', label: 'Customer segments', icon: 'diversity_3' },
         { to: '/setup/currencies', label: 'Currencies', icon: 'payments' },
+        { to: '/setup/fee-plans', label: 'Fee plans', icon: 'request_quote', keys: 'pricing charges annual monthly atm' },
+        { to: '/setup/fx-rates', label: 'FX rates', icon: 'currency_exchange', keys: 'foreign exchange conversion markup' },
         { to: '/setup/fraud-rules', label: 'Fraud rules', icon: 'shield', keys: 'risk velocity mcc country score' },
         { to: '/setup/numbering', label: 'Numbering & settings', icon: 'pin', keys: 'sequence cif settings country' }
       ]

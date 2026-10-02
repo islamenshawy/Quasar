@@ -9,6 +9,7 @@ import com.cms.card.IssuanceException;
 import com.cms.common.AuditLog;
 import com.cms.common.Settings;
 import com.cms.core.CoreSafService;
+import com.cms.fee.FeeService;
 import com.cms.fraud.FraudService;
 import com.cms.customer.CustomerService;
 import com.cms.ledger.LedgerService;
@@ -43,11 +44,13 @@ public class ApprovalActions {
     public record SafCancel(long id, String reason) {}
     public record FraudRuleSave(String code, boolean create, FraudService.Rule rule) {}
     public record AlertResolve(long id, FraudService.Resolution resolution) {}
+    public record FeePlanSave(String code, boolean create, FeeService.FeePlan plan) {}
+    public record FxRateSave(FeeService.FxRate rate) {}
 
     public ApprovalActions(ApprovalService approvals, ReferenceDataService ref, Settings settings,
                            LedgerService ledger, CardAdminService cards, CustomerService customers,
                            AccountService accounts, AuditLog audit, CardIssuanceService issuance, BatchService batch,
-                           CoreSafService saf, FraudService fraud) {
+                           CoreSafService saf, FraudService fraud, FeeService fees) {
         approvals.register("CURRENCY_SAVE", CurrencySave.class, (p, op) -> ref.saveCurrency(p.code(), p.data(), p.create(), op));
         approvals.register("SEGMENT_SAVE", SegmentSave.class, (p, op) -> ref.saveSegment(p.code(), p.data(), p.create(), op));
         approvals.register("ACCOUNT_TYPE_SAVE", AccountTypeSave.class, (p, op) -> ref.saveAccountType(p.code(), p.data(), p.create(), op));
@@ -86,5 +89,7 @@ public class ApprovalActions {
         approvals.register("CORE_SAF_CANCEL", SafCancel.class, (p, op) -> saf.cancel(p.id(), p.reason(), op));
         approvals.register("FRAUD_RULE_SAVE", FraudRuleSave.class, (p, op) -> fraud.saveRule(p.code(), p.create(), p.rule(), op));
         approvals.register("FRAUD_ALERT_RESOLVE", AlertResolve.class, (p, op) -> fraud.resolve(p.id(), p.resolution(), op));
+        approvals.register("FEE_PLAN_SAVE", FeePlanSave.class, (p, op) -> fees.savePlan(p.code(), p.create(), p.plan(), op));
+        approvals.register("FX_RATE_SAVE", FxRateSave.class, (p, op) -> fees.saveFxRate(p.rate(), op));
     }
 }
