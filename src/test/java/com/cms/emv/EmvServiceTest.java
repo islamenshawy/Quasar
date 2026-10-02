@@ -41,6 +41,44 @@ class EmvServiceTest {
     }
 
     @Test
+    void byteTokenTakesOneByteOfATag_forVisaCvn17() {
+        Map<String, byte[]> t = new LinkedHashMap<>();
+        t.put("9F02", HEX.parseHex("000000010000"));
+        t.put("9F37", HEX.parseHex("A1B2C3D4"));
+        t.put("9F36", HEX.parseHex("0007"));
+        t.put("9F10", HEX.parseHex("06011103A00000"));
+        assertEquals("000000010000" + "A1B2C3D4" + "0007" + "A0",
+                HEX.formatHex(EmvService.dataBlock(t, "9F02,9F37,9F36,9F10:B5")));
+        assertEquals('0', EmvService.cryptoScheme("VISA_CVN17"));
+        assertEquals('1', EmvService.cryptoScheme("EMV_CSK"));
+    }
+
+    @Test
+    void readsIssuerScriptResults() {
+        // 9F5B: two scripts, first successful (2), second failed (1)
+        String icc = "9F5B0A" + "21" + "AABBCCDD" + "12" + "11223344";
+        var r = EmvService.scriptResults(icc);
+        assertEquals(2, r.size());
+        assertEquals("AABBCCDD", r.get(0).scriptId());
+        assertEquals(2, r.get(0).result());
+        assertEquals(1, r.get(1).result());
+        assertTrue(EmvService.scriptResults("9F2608" + "0102030405060708").isEmpty());
+    }
+
+    @Test
+    void scriptMacDependsOnTheCommandAndTheArqc() {
+        byte[] smi = HEX.parseHex("5A5A5A5A5A5A5A5A3C3C3C3C3C3C3C3C");
+        byte[] y = EmvService.y("9999995000000005", "00");
+        byte[] ac = HEX.parseHex("1122334455667788");
+        byte[] unblock = HEX.parseHex("8424000004" + "0007" + "1122334455667788");
+        byte[] block = HEX.parseHex("841E000004" + "0007" + "1122334455667788");
+        byte[] m1 = EmvCrypto.scriptMac(smi, y, ac, '1', unblock);
+        assertEquals(4, m1.length);
+        assertFalse(java.util.Arrays.equals(m1, EmvCrypto.scriptMac(smi, y, ac, '1', block)));
+        assertFalse(java.util.Arrays.equals(m1, EmvCrypto.scriptMac(smi, y, HEX.parseHex("1122334455667789"), '1', unblock)));
+    }
+
+    @Test
     void optionAInputIsRightmost16DigitsOfPanAndPsn() {
         assertEquals("9999500000000501", HEX.formatHex(EmvService.y("9999995000000005", "01")));
         assertEquals("0041111111111101", HEX.formatHex(EmvService.y("411111111111", "01")));   // 14 digits, left-padded
