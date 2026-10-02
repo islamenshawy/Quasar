@@ -99,12 +99,77 @@ Dev profile only. Every case goes through the real TCP interface via the corehos
 | I13-I14 | PIN change with field 125, then new PIN | 000, 000 |
 | I15-I16 | 1804/811 key change, then a PIN under the new ZPK | 800, 000 |
 | I17-I18 | Messages recorded; seeded ZPK restored | pass |
+| I19-I20 | Chip balance inquiry and cash with a valid ARQC | 000; field 55 tag 91 ARPC valid, ARC 00 |
+| I21 | Chip with a tampered ARQC | 129, no ARPC |
+| I22 | Chip with a replayed ATC | 129, ARPC with ARC 05 |
 
-## 4. Manual UI cases (CMS Console, `/`)
+## 3c. Security catalogue (`scripts/security-test.sh`)
+
+Dev profile (dev users). Every test script signs in: operator for changes, supervisor for approvals (`CMS_USER`, `CMS_PASSWORD`, `SUP_USER`, `SUP_PASSWORD`, `CMS_DEXXIS_API_KEY` override the dev defaults).
+
+| ID | Case | Expected |
+|---|---|---|
+| S01-S03 | Anonymous call, public version, wrong password | 401, 200, 401 |
+| S04-S07 | Viewer reads / writes; operator changes setup; operator opens Users | 200, 403, 403, 403 |
+| S08-S14 | Supervisor setup change; same supervisor approves; operator approves; reject without reason; second supervisor approves; change applied; invalid change | 202, FOUR_EYES, 403, 422, APPROVED, applied, 422 at submission |
+| S15-S22 | New user with temporary password; forced change; weak password; lock after 5 failures; admin reset unlocks | as named |
+| S23-S26 | Console session: sign-in with CSRF token; POST without / with token; /api/auth/me | 200, 403, 200, operator |
+| S27-S29 | Dexxis without key / with key; operator on Dexxis API | 401, reaches service (404), 403 |
+| S30 | Supervisor changes approval policy | 403 (admin only) |
+
+## 3d. Card lifecycle catalogue (`scripts/lifecycle-test.sh`)
+
+Dev profile (uses the dev time helpers to age cards and holds).
+
+| ID | Case | Expected |
+|---|---|---|
+| L01-L04 | Damaged card replaced with the same number; PSN 01; second replacement; Dexxis search | PENDING_PRINT, points to old card; DUPLICATE; Dexxis gets PSN 01 |
+| L05-L08 | Old card before / after the replacement is activated (new PIN) | works; old CANCELLED; the number authorizes on the new card |
+| L09-L12 | Lost card: keep number refused; new number; old card | INVALID_REQUEST; new PAN; old LOST, declines 208 |
+| L13-L14 | Show number for printing 3 times, then again | PAN shown; 4th refused (LIMIT_REACHED) |
+| L15-L17 | Operator runs a job; card past expiry after CARD_EXPIRY | 403; EXPIRED |
+| L18-L21 | Card expiring within 30 days; CARD_RENEWAL twice | renewal waiting for print, same number, PSN 01; no duplicate |
+| L22-L23 | Card pending print for 40 days; STALE_PENDING_PRINT | CANCELLED |
+| L24-L26 | Pre-auth hold expired; HOLD_EXPIRY | funds available again |
+| L27 | Job list | last runs recorded |
+
+## 3e. Core banking catalogue (`scripts/core-test.sh`)
+
+Runs against the DEV core banking simulator (`/api/dev/core-sim`); P02 card on a `CORE_CURRENT` account.
+
+| ID | Case | Expected |
+|---|---|---|
+| C00-C01 | Core connected; P02 card on a core account activated | up; ACTIVE |
+| C02-C08 | Balance inquiry, withdrawal, insufficient funds, reversal, pre-auth, capture, refund | balances are core's; 116 on insufficient funds; reversal restores core |
+| C09-C10 | Account blocked in core; live balance for the account page | 119; APPROVED with balance |
+| C11-C14 | Core down: balance inquiry, withdrawal within / over stand-in limit, reversal | 911; 000 stand-in; 911; 400 |
+| C15-C18 | Queue holds debit + reversal; replay while down retries the debit and keeps the reversal behind it; replay when back sends both in order | balance unchanged after replay |
+| C19-C22 | Stand-in purchase, cancel queued posting (maker-checker), replay | cancelled posting never reaches core |
+| C23-C24 | Nothing pending; manual ledger entry on a core account | refused (INVALID_REQUEST) |
+
+## 3f. Fraud rules catalogue (`scripts/fraud-test.sh`)
+
+Test rules use fixed codes `TEST_*`, scoped to product P01, and are switched off at the end (the decline score is reset to 100).
+
+| ID | Case | Expected |
+|---|---|---|
+| F00-F03 | Setup; starter rules inactive; rule change needs approval by a second supervisor | approvalPending, APPROVED |
+| F04-F05 | Gambling MCC rule (DECLINE); other MCC | 102; 000 |
+| F06-F07 | Advice hitting a DECLINE rule | 000, alert with action ALERT |
+| F08-F10 | Foreign acquirer rule (ALERT 30); domestic purchase | 000 + alert score 30; no new alert |
+| F11-F12 | Two alert rules 30 + 80 reach decline score 100; with score 200 | 102 (score 110); 000 |
+| F13 | Velocity: one more than the allowed count in 10 minutes | 102 |
+| F14-F15 | DECLINE_BLOCK rule on MCC 4829 | 102 and card BLOCKED |
+| F16-F19 | Open count; take; note; false positive with 1 h pause | assignedTo, note stamped, FALSE_POSITIVE |
+| F20 | Paused card passes the blocking rule | 000 |
+| F21-F23 | Confirm fraud as LOST; other open alerts closed; resolve twice | LOST, 0 open, INVALID_STATUS |
+
+## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |
 |---|---|---|
-| UI-01 | First visit | Operator id prompt; the id is shown in the header and recorded on every change |
+| UI-01 | First visit | Sign-in page; after sign-in the user menu shows name and roles; every change is recorded under that user |
+| UI-01b | Operator posts a funding entry; supervisor opens Approvals | Operator sees "Sent for approval"; supervisor sees the badge and approves; the maker cannot approve |
 | UI-02 | Issue card → New customer, type the full name only | Name on card fills in uppercase, max 26, and stops following once edited |
 | UI-03 | New customer with an invalid name on card (digits) | Clear error, nothing created |
 | UI-04 | Setup → Numbering: CIF source = CMS_GENERATED, then create a customer | CIF field hidden; CIF assigned from the CIF sequence |

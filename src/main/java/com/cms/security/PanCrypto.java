@@ -62,7 +62,7 @@ public class PanCrypto {
             byte[] pt = c.doFinal(blob, IV_LEN, blob.length - IV_LEN);
             return new String(pt, StandardCharsets.US_ASCII);
         } catch (GeneralSecurityException ex) {
-            throw new IllegalStateException("PAN decryption failed", ex);
+            throw new PanKeyException(ex);
         }
     }
 

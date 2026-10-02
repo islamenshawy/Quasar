@@ -138,14 +138,35 @@ public final class PayShieldClient implements AutoCloseable {
     }
 
     // ------------------------------------------------------------------
-    // KQ - ARQC verification / ARPC generation. NOT IMPLEMENTED YET.
-    // Needs: mode flag, scheme ID (Visa/MC CVN), MK-AC, PAN+PSN, ATC,
-    // unpredictable number, transaction data (from BASE24 EMV token / field 55),
-    // ARQC, ARC. Layout differs per scheme/CVN - build from the manual once the
-    // BASE24 EMV token layout is known.
+    // KQ - ARQC verification / ARPC generation (EMV, CMS-057).
+    // Request : KQ + mode(1) + scheme(1) + MK-AC + Y(8B) + ATC(2B) + UN(4B)
+    //           + data length(2H) + data(nB) + ';' + ARQC(8B) + ARC(2B)
+    //   mode   0 verify, 1 verify + ARPC, 2 ARPC only
+    //   scheme 0 Visa CVN10 (card key), 1 EMV common session key (M/Chip, CVN18)
+    //   Y      rightmost 16 digits of PAN||PSN as BCD (EMV option A derivation)
+    // Response: KR + err (00 ok, 01 ARQC failed) [+ ARPC(8B)]
+    // Binary fields travel as ISO-8859-1 characters (1 char = 1 byte).
+    // PROVISIONAL layout: confirm against the Host Command Reference for your firmware.
     // ------------------------------------------------------------------
-    public boolean verifyArqcAndGenerateArpc(/* EmvData data */) {
-        throw new UnsupportedOperationException("KQ pending BASE24 EMV token spec");
+    public boolean verifyArqc(String mkAc, char scheme, byte[] y, byte[] atc, byte[] un, byte[] data, byte[] arqc) {
+        Response r = raw("KQ", kqBody('0', scheme, mkAc, y, atc, un, data, arqc, new byte[2]));
+        if ("00".equals(r.errorCode)) return true;
+        if ("01".equals(r.errorCode)) return false;
+        throw new HsmException("KQ", r.errorCode, "ARQC verification error");
+    }
+
+    public byte[] generateArpc(String mkAc, char scheme, byte[] y, byte[] atc, byte[] un, byte[] data, byte[] arqc, byte[] arc) {
+        String d = call("KQ", kqBody('2', scheme, mkAc, y, atc, un, data, arqc, arc));
+        return d.substring(0, 8).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+    }
+
+    private static String kqBody(char mode, char scheme, String mkAc, byte[] y, byte[] atc, byte[] un, byte[] data,
+                                 byte[] arqc, byte[] arc) {
+        if (data.length > 255) throw new IllegalArgumentException("EMV data block too long");
+        java.nio.charset.Charset bin = java.nio.charset.StandardCharsets.ISO_8859_1;
+        return "" + mode + scheme + mkAc + new String(y, bin) + new String(atc, bin) + new String(un, bin)
+                + String.format("%02X", data.length) + new String(data, bin) + ";" + new String(arqc, bin)
+                + new String(arc, bin);
     }
 
     // ==================================================================

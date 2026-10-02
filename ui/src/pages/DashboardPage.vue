@@ -1,22 +1,21 @@
 <template>
   <q-page padding class="page">
-    <PageHeader title="Dashboard" subtitle="Issuance activity and portfolio status">
-      <template #actions>
-        <q-btn outline no-caps color="primary" icon="person_add" label="New customer" @click="newCustomer = true" />
-        <q-btn unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
-      </template>
-    </PageHeader>
+    <PulseHero class="q-mb-md" :eyebrow="today" :title="greeting" :approved="t.approved ?? 0" :declined="t.declined ?? 0">
+      <q-btn v-if="can.write" unelevated no-caps color="primary" icon="add_card" label="Issue card" to="/issue" />
+      <q-btn v-if="can.write" outline no-caps icon="person_add" label="New customer" @click="newCustomer = true" />
+      <q-btn outline no-caps icon="receipt_long" label="Transactions" to="/transactions" />
+    </PulseHero>
 
     <div class="row q-col-gutter-md">
       <div v-for="t in tiles" :key="t.label" class="col-6 col-md-3">
         <q-card flat bordered class="cursor-pointer full-height" @click="$router.push(t.to)">
           <q-card-section>
-            <div class="row items-center no-wrap">
+            <div class="row items-center no-wrap q-gutter-x-md">
+              <div class="qz-tile-icon" :class="`tone-${t.tone}`"><q-icon :name="t.icon" size="24px" /></div>
               <div class="col">
                 <div class="stat-value">{{ t.value }}</div>
                 <div class="stat-label">{{ t.label }}</div>
               </div>
-              <q-icon :name="t.icon" size="32px" :color="t.color" />
             </div>
             <div class="text-caption muted q-mt-xs">{{ t.note }}</div>
           </q-card-section>
@@ -25,19 +24,7 @@
     </div>
 
     <div class="row q-col-gutter-md q-mt-none">
-      <div class="col-12 col-md-4">
-        <q-card flat bordered class="full-height cursor-pointer" @click="$router.push('/transactions')">
-          <q-card-section>
-            <div class="text-subtitle1 text-weight-medium">Transactions today</div>
-            <div class="row q-mt-sm">
-              <div class="col"><div class="stat-value text-positive">{{ t.approved ?? 0 }}</div><div class="stat-label">approved</div></div>
-              <div class="col"><div class="stat-value text-negative">{{ t.declined ?? 0 }}</div><div class="stat-label">declined</div></div>
-              <div class="col"><div class="stat-value">{{ approvalRate }}</div><div class="stat-label">approval rate</div></div>
-            </div>
-          </q-card-section>
-        </q-card>
-      </div>
-      <div class="col-12 col-md-4">
+      <div class="col-12 col-md-6">
         <q-card flat bordered class="full-height">
           <q-card-section>
             <div class="text-subtitle1 text-weight-medium q-mb-sm">Approved volume today</div>
@@ -48,7 +35,7 @@
           </q-card-section>
         </q-card>
       </div>
-      <div class="col-12 col-md-4">
+      <div class="col-12 col-md-6">
         <q-card flat bordered class="full-height">
           <q-card-section>
             <div class="text-subtitle1 text-weight-medium q-mb-sm">Top decline reasons today</div>
@@ -102,32 +89,36 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import PageHeader from '../components/PageHeader.vue'
+import PulseHero from '../components/PulseHero.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import { api } from '../lib/api.js'
+import { can, session } from '../lib/session.js'
 import { dateTime, label, money, statusColor } from '../lib/format.js'
 
 const d = ref({})
 const t = ref({})
 const codes = ref({})
-const approvalRate = computed(() => {
-  const n = (t.value.approved ?? 0) + (t.value.declined ?? 0)
-  return n ? Math.round(100 * t.value.approved / n) + '%' : '—'
-})
 const recent = ref([])
+const today = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+const greeting = computed(() => {
+  const h = new Date().getHours()
+  const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+  const name = session.user?.fullName?.split(' ')[0] || session.user?.username || ''
+  return `${part}${name ? ', ' + name : ''}.`
+})
 const newCustomer = ref(false)
 
 const sum = o => Object.values(o || {}).reduce((a, b) => a + b, 0)
 const toRows = o => Object.entries(o || {}).map(([key, value]) => ({ key, value })).sort((a, b) => b.value - a.value)
 
 const tiles = computed(() => [
-  { label: 'Active customers', value: d.value.customers?.ACTIVE ?? 0, icon: 'people', color: 'primary',
+  { label: 'Active customers', value: d.value.customers?.ACTIVE ?? 0, icon: 'people', tone: 'indigo',
     note: `${d.value.customersToday ?? 0} new today`, to: '/customers' },
-  { label: 'Open accounts', value: sum(d.value.accounts) - (d.value.accounts?.CLOSED ?? 0), icon: 'account_balance', color: 'secondary',
+  { label: 'Open accounts', value: sum(d.value.accounts) - (d.value.accounts?.CLOSED ?? 0), icon: 'account_balance', tone: 'blue',
     note: `${(d.value.accounts?.BLOCKED ?? 0) + (d.value.accounts?.DEBIT_BLOCKED ?? 0)} blocked`, to: '/accounts' },
-  { label: 'Active cards', value: d.value.cards?.ACTIVE ?? 0, icon: 'credit_card', color: 'positive',
+  { label: 'Active cards', value: d.value.cards?.ACTIVE ?? 0, icon: 'credit_card', tone: 'flare',
     note: `${d.value.activatedToday ?? 0} activated today`, to: '/cards?status=ACTIVE' },
-  { label: 'Waiting for print', value: d.value.cards?.PENDING_PRINT ?? 0, icon: 'print', color: 'warning',
+  { label: 'Waiting for print', value: d.value.cards?.PENDING_PRINT ?? 0, icon: 'print', tone: 'amber',
     note: `${d.value.issuedToday ?? 0} issued today`, to: '/cards?status=PENDING_PRINT' }
 ])
 

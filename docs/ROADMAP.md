@@ -15,6 +15,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | IN-03 | Who derives EMV ICC keys: Dexxis HSM from IMK, or CMS? | CMS-057, CMS-058 |
 | IN-04 | Track 2 discretionary data layout per product | CMS-059 |
 | IN-05 | payShield config: LMK type (variant/key block), header length, PIN block format | CMS-043 |
+| IN-06 | Core banking API spec: funds check / debit / hold / reverse, idempotency, error codes, timeouts; stand-in policy per product | CMS-090 |
 | IN-06 | Kiosk PIN entry key (TPK or ZPK) and format | CMS-044 |
 | IN-07 | Real segments, account types, products and eligibility matrix | CMS-045 |
 
@@ -50,13 +51,24 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 
 | ID | Item | Status |
 |---|---|---|
-| CMS-070 | CMS Console (Vue 3 + Quasar) built into the jar; replaces `/issuance.html` | Done (branch `feature/CMS-070-admin-console`) |
+| CMS-070 | Quasar console (Vue 3 + Quasar) built into the jar; replaces `/issuance.html` | Done (branch `feature/CMS-070-admin-console`) |
 | CMS-071 | Reference data screens: currencies, segments, account types, card products, eligibility matrix | Done |
 | CMS-072 | CIF / account numbering: sequences, CIF source setting, per-type number source, allowed currencies, max per customer | Done |
 | CMS-073 | Customer and account maintenance: search, edit, status changes with reason | Done |
 | CMS-074 | Card maintenance: search, PAN lookup, history, block / unblock / lost / stolen / cancel | Done |
 | CMS-075 | Audit log viewer and dashboard | Done |
 | CMS-076 | Smoke test cases for the console API (numbering, status rules) | Next |
+
+## Card lifecycle (next minor release)
+
+| ID | Item | Status |
+|---|---|---|
+| CMS-080 | Card replacement (same / new number, reasons, predecessor retired on activation) | Done |
+| CMS-081 | Automatic renewal before expiry | Done |
+| CMS-082 | Batch scheduler with run history and single-run lock | Done |
+| CMS-083 | Jobs: card expiry, hold expiry, uncollected prints, usage cleanup | Done |
+| CMS-084 | Renewal and replacement fees posted to the account | Planned |
+| CMS-085 | Batch output files for bulk (bureau) embossing | Planned |
 
 ## 0.5.0 — Authorization engine and ledger
 
@@ -90,7 +102,11 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | ID | Item | Status |
 |---|---|---|
 | CMS-056 | SOAP endpoint from Dexxis WSDL | Blocked (IN-02) |
-| CMS-057 | ARQC verification / ARPC generation (KQ) + hsm-sim support | Blocked (IN-03) |
+| CMS-057 | ARQC verification / ARPC generation (KQ) + hsm-sim support | Done, provisional; confirm KQ layout, key ownership (IN-03) and CDOL1 per chip profile |
+| CMS-068 | Issuer scripts (PIN unblock / change on chip), CDA/DDA key management | Planned |
+| CMS-090 | Core banking funds interface, stand-in limit, store-and-forward queue and replay | Done, provisional contract (IN-06) |
+| CMS-095 | Fraud and risk rules, scoring, alert queue and case outcomes | Done; thresholds of the starter rules to be agreed with the fraud team before activation |
+| CMS-096 | Fraud scoring model / external fraud engine hook, cardholder confirmation by SMS | Planned (after CMS-105) |
 | CMS-058 | EMV data in perso response if CMS owns ICC key derivation | Blocked (IN-03) |
 | CMS-059 | Final track discretionary data per product | Blocked (IN-04) |
 
@@ -98,7 +114,8 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 
 | ID | Item | Status |
 |---|---|---|
-| CMS-060 | Operator authentication and roles (replace X-Operator header) | Planned |
+| CMS-060 | Operator authentication, roles and maker-checker (replaces X-Operator) | Done |
+| CMS-067 | SSO / LDAP / Active Directory sign-in instead of local passwords | Planned |
 | CMS-061 | PAN keys from KMS / HSM-wrapped store; key rotation | Planned |
 | CMS-062 | mTLS / allow-list for Dexxis and corehost interfaces | Planned |
 | CMS-063 | Reconciliation report (CMS vs corehost journal) | Planned |

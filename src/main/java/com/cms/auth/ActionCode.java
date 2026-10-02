@@ -12,6 +12,7 @@ public final class ActionCode {
 
     public static final String APPROVED = "000";
     public static final String DO_NOT_HONOUR = "100";
+    public static final String SUSPECTED_FRAUD = "102";
     public static final String EXPIRED_CARD = "101";
     public static final String RESTRICTED_CARD = "104";
     public static final String PIN_TRIES_EXCEEDED = "106";
@@ -34,10 +35,12 @@ public final class ActionCode {
     public static final String FORMAT_ERROR = "904";
     public static final String ISSUER_INOPERATIVE = "907";
     public static final String SYSTEM_MALFUNCTION = "909";
+    public static final String ISSUER_TIMEOUT = "911";
 
     private static final Map<String, String> TEXT = Map.ofEntries(
             Map.entry(APPROVED, "Approved"),
             Map.entry(DO_NOT_HONOUR, "Do not honour"),
+            Map.entry(SUSPECTED_FRAUD, "Suspected fraud"),
             Map.entry(EXPIRED_CARD, "Expired card"),
             Map.entry(RESTRICTED_CARD, "Restricted card"),
             Map.entry(PIN_TRIES_EXCEEDED, "Allowable PIN tries exceeded"),
@@ -59,7 +62,8 @@ public final class ActionCode {
             Map.entry(INVALID_TRANSACTION, "Invalid transaction"),
             Map.entry(FORMAT_ERROR, "Format error"),
             Map.entry(ISSUER_INOPERATIVE, "Issuer or switch inoperative"),
-            Map.entry(SYSTEM_MALFUNCTION, "System malfunction"));
+            Map.entry(SYSTEM_MALFUNCTION, "System malfunction"),
+            Map.entry(ISSUER_TIMEOUT, "Card issuer timed out"));
 
     public static boolean isApproval(String code) {
         return APPROVED.equals(code) || REVERSAL_ACCEPTED.equals(code);

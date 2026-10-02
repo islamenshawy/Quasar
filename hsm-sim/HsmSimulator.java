@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class HsmSimulator {
 
-    static final String VERSION = "1.0.0";
+    static final String VERSION = "1.1.0";
     static final HexFormat HEX = HexFormat.of().withUpperCase();
     static final String DEFAULT_LMK = "89ABCDEF0123456776543210FEDCBA98";
 
@@ -97,13 +97,13 @@ public class HsmSimulator {
             while (true) {
                 int len;
                 try { len = in.readUnsignedShort(); } catch (EOFException eof) { return; }
-                String msg = new String(in.readNBytes(len), StandardCharsets.US_ASCII);
+                String msg = new String(in.readNBytes(len), StandardCharsets.ISO_8859_1);   // 1 char = 1 byte (KQ is binary)
                 String header = msg.substring(0, Math.min(headerLength, msg.length()));
                 String body = msg.substring(Math.min(headerLength, msg.length()));
                 String cmd = body.length() >= 2 ? body.substring(0, 2) : "??";
                 String resp = process(cmd, body.substring(Math.min(2, body.length())));
                 if (delayMs > 0) Thread.sleep(delayMs);
-                byte[] r = (header + resp).getBytes(StandardCharsets.US_ASCII);
+                byte[] r = (header + resp).getBytes(StandardCharsets.ISO_8859_1);
                 out.writeShort(r.length);
                 out.write(r);
                 out.flush();
@@ -131,6 +131,7 @@ public class HsmSimulator {
                 case "EC" -> cmdEC(c);
                 case "CW" -> cmdCW(c);
                 case "CY" -> cmdCY(c);
+                case "KQ" -> cmdKQ(c);
                 default -> "68";                       // command not supported by simulator
             };
         } catch (SimError e) {
@@ -200,6 +201,84 @@ public class HsmSimulator {
         String given = c.take(3); String pan = c.until(';'); String exp = c.take(4); String sc = c.take(3);
         return cvv(cvk, pan, exp, sc).equals(given) ? "00" : "01";
     }
+
+    // ---- KQ: ARQC verification / ARPC generation (EMV).
+    // mode(1: 0 verify, 1 verify + ARPC, 2 ARPC only) scheme(1: 0 Visa CVN10 = card key, 1 EMV common session key)
+    // MK-AC + Y(8B: rightmost 16 digits of PAN||PSN, BCD) + ATC(2B) + UN(4B) + data length(2H) + data(nB)
+    // + ';' + ARQC(8B) + ARC(2B)  ->  00 [+ ARPC(8B)] | 01 ARQC failed
+    // Field layout PROVISIONAL: confirm against the payShield Host Command Reference (CMS-057).
+    static String cmdKQ(Cursor c) {
+        char mode = c.take(1).charAt(0), scheme = c.take(1).charAt(0);
+        byte[] mk = fromLmk(c.key());
+        byte[] y = bin(c.take(8)), atc = bin(c.take(2)), un = bin(c.take(4));
+        byte[] data = bin(c.take(Integer.parseInt(c.take(2), 16)));
+        if (c.take(1).charAt(0) != ';') throw new SimError("15");
+        byte[] arqc = bin(c.take(8)), arc = bin(c.take(2));
+        byte[] key = emvKey(mk, y, atc, scheme);
+        if (mode == '0' || mode == '1') {
+            if (!Arrays.equals(arqc(key, data, scheme), arqc)) return "01";
+            if (mode == '0') return "00";
+        }
+        return "00" + str(arpc(key, arqc, arc));
+    }
+
+    /** Key that computes the cryptogram: the card key (Visa CVN10) or the session key for this ATC (EMV CSK). */
+    static byte[] emvKey(byte[] mk, byte[] y, byte[] atc, char scheme) {
+        byte[] udk = udk(mk, y);
+        return scheme == '0' ? udk : sessionKey(udk, atc);
+    }
+
+    /** EMV option A: UDK = 3DES(MK, Y) || 3DES(MK, Y xor FF..FF), odd parity. */
+    static byte[] udk(byte[] mk, byte[] y) {
+        byte[] yx = new byte[8];
+        for (int i = 0; i < 8; i++) yx[i] = (byte) (y[i] ^ 0xFF);
+        return parity(concat(tdes(mk, y, true), tdes(mk, yx, true)));
+    }
+
+    /** EMV common session key: 3DES(UDK, ATC||F0||00..) || 3DES(UDK, ATC||0F||00..). */
+    static byte[] sessionKey(byte[] udk, byte[] atc) {
+        byte[] l = new byte[8], r = new byte[8];
+        l[0] = r[0] = atc[0]; l[1] = r[1] = atc[1]; l[2] = (byte) 0xF0; r[2] = 0x0F;
+        return parity(concat(tdes(udk, l, true), tdes(udk, r, true)));
+    }
+
+    /** ISO 9797-1 MAC algorithm 3; padding method 1 (zeros) for CVN10, method 2 (80 00..) for CSK. */
+    static byte[] arqc(byte[] key, byte[] data, char scheme) {
+        int n = scheme == '0' ? data.length : data.length + 1;
+        byte[] p = Arrays.copyOf(data, (n + 7) / 8 * 8);
+        if (scheme != '0') p[data.length] = (byte) 0x80;
+        byte[] k1 = Arrays.copyOfRange(key, 0, 8), k2 = Arrays.copyOfRange(key, 8, 16), h = new byte[8];
+        for (int i = 0; i < p.length; i += 8) {
+            for (int j = 0; j < 8; j++) h[j] ^= p[i + j];
+            h = des(k1, h, true);
+        }
+        return des(k1, des(k2, h, false), true);
+    }
+
+    /** ARPC method 1: 3DES(key, ARQC xor (ARC || 00..)). */
+    static byte[] arpc(byte[] key, byte[] arqc, byte[] arc) {
+        byte[] x = Arrays.copyOf(arqc, 8);
+        x[0] ^= arc[0];
+        x[1] ^= arc[1];
+        return tdes(key, x, true);
+    }
+
+    static byte[] parity(byte[] k) {
+        for (int i = 0; i < k.length; i++) {
+            int b = k[i] & 0xFE;
+            k[i] = (byte) (b | (Integer.bitCount(b) % 2 == 0 ? 1 : 0));
+        }
+        return k;
+    }
+
+    static byte[] concat(byte[] a, byte[] b) {
+        byte[] r = Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, r, a.length, b.length);
+        return r;
+    }
+
+    static byte[] bin(String s) { return s.getBytes(StandardCharsets.ISO_8859_1); }
+    static String str(byte[] b) { return new String(b, StandardCharsets.ISO_8859_1); }
 
     // =================================================================================
     // Algorithms
@@ -375,6 +454,7 @@ public class HsmSimulator {
         {"ZPK_COREHOST", "ZPK", "4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E"},
         {"PVK_P01",      "PVK", "FEDCBA98765432100123456789ABCDEF"},
         {"CVK_P01",      "CVK", "0123456789ABCDEFFEDCBA9876543210"},
+        {"IMK_AC_P01",   "IMK_AC", "4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D"},
     };
 
     static void seed() {
@@ -397,6 +477,23 @@ public class HsmSimulator {
         String cvv = cvv(HEX.parseHex("0123456789ABCDEFFEDCBA9876543210"), "4123456789012345", "8701", "101");
         fail += check("Visa CVV reference vector (561)", "561".equals(cvv), cvv);
 
+        {
+            byte[] mk = HEX.parseHex("4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D");
+            byte[] y = HEX.parseHex("9999500000000501"), atc = HEX.parseHex("0001"), un = HEX.parseHex("A1B2C3D4");
+            byte[] data = HEX.parseHex("000000010000" + "000000000000" + "0818" + "0000000000" + "0818" + "261001" + "00" + "A1B2C3D4" + "3C00" + "0001");
+            for (char scheme : new char[]{'0', '1'}) {
+                byte[] key = emvKey(mk, y, atc, scheme);
+                byte[] ac = arqc(key, data, scheme);
+                String req = "1" + scheme + keyUnderLmk(mk) + str(y) + str(atc) + str(un)
+                        + String.format("%02X", data.length) + str(data) + ";" + str(ac) + "00";
+                String r = process("KQ", req);
+                fail += check("KQ scheme " + scheme + " verify + ARPC", r.startsWith("KR00") && r.length() == 12, HEX.formatHex(bin(r)));
+                byte[] bad = ac.clone(); bad[0] ^= 1;
+                String r2 = process("KQ", "0" + scheme + keyUnderLmk(mk) + str(y) + str(atc) + str(un)
+                        + String.format("%02X", data.length) + str(data) + ";" + str(bad) + "00");
+                fail += check("KQ scheme " + scheme + " wrong ARQC refused", r2.equals("KR01"), r2);
+            }
+        }
         byte[] zpk = HEX.parseHex("0B0B0B0B0B0B0B0B1616161616161616");
         byte[] pvk = HEX.parseHex("FEDCBA98765432100123456789ABCDEF");
         String pan = "4000001234567899", acct = account12(pan);

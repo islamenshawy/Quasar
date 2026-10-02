@@ -2,7 +2,7 @@
   <q-page padding class="page">
     <PageHeader title="Customers" subtitle="Search by CIF, name, national ID, mobile or email">
       <template #actions>
-        <q-btn unelevated no-caps color="primary" icon="person_add" label="New customer" @click="dialog = true" />
+        <q-btn v-if="can.write" unelevated no-caps color="primary" icon="person_add" label="New customer" @click="dialog = true" />
       </template>
     </PageHeader>
 
@@ -42,6 +42,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import CustomerFormDialog from '../components/CustomerFormDialog.vue'
 import { api, qs } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { loadReference, reference } from '../lib/reference.js'
 import { date, label } from '../lib/format.js'
 
@@ -84,5 +85,5 @@ watch(filters, () => {
   reload()
 })
 
-onMounted(() => { loadReference(); reload() })
+onMounted(() => { loadReference(); reload(); if (route.query.new) dialog.value = true })
 </script>

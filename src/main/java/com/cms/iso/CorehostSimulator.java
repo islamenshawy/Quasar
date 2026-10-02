@@ -6,6 +6,8 @@ import com.cms.security.PanCrypto;
 import org.jpos.iso.ISOException;
 import org.jpos.iso.ISOMsg;
 import org.jpos.iso.ISOUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -48,11 +50,12 @@ public class CorehostSimulator {
     public record SimRequest(String type, String channel, Long cardId, String pan, String pin, String newPin,
                              Long amount, String currency, String terminalId, String acquirerId, String mcc,
                              String merchant, String originalRef, Long amountCompleted, Boolean advice,
-                             Boolean repeat) {}
+                             Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc, String tvr,
+                             String country) {}
 
     public record SimResult(String ref, String mti, Map<String, String> request, Map<String, String> response,
                             String actionCode, String actionText, boolean approved, Long ledgerBalance,
-                            Long availableBalance, long elapsedMs) {}
+                            Long availableBalance, long elapsedMs, Map<String, Object> chip) {}
 
     private record Sent(String mti, String stan, String localDt, String acquirerId, long amount, String pc,
                         String pan, String terminalId, String currency) {}
@@ -63,16 +66,25 @@ public class CorehostSimulator {
     private final String host;
     private final int port;
     private final byte[] zmk;
+    private static final Logger log = LoggerFactory.getLogger(CorehostSimulator.class);
+
     private final AtomicReference<byte[]> zpk = new AtomicReference<>();
+    private final String zpkName;
     private final AtomicInteger stan = new AtomicInteger((int) (System.currentTimeMillis() % 800000) + 100000);
     private final Map<String, Sent> sent = new ConcurrentHashMap<>();
     private final Map<String, byte[]> lastFrames = new ConcurrentHashMap<>();
+    private final byte[] imk;
+    private final Map<String, Integer> atcByCard = new ConcurrentHashMap<>();
+    /** Card key per sent chip message, to check the ARPC in the answer. */
+    private final Map<String, byte[][]> chipState = new ConcurrentHashMap<>();
 
     public CorehostSimulator(IsoCodec codec, JdbcTemplate jdbc, PanCrypto panCrypto,
                              @Value("${cms.dev.iso-host:localhost}") String host,
                              @Value("${cms.iso.port:7000}") int port,
                              @Value("${cms.dev.acquirer-zpk-clear:4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E}") String zpkClear,
-                             @Value("${cms.dev.zmk-clear:1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A}") String zmkClear) {
+                             @Value("${cms.dev.zmk-clear:1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A}") String zmkClear,
+                             @Value("${cms.dev.imk-ac-clear:4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D}") String imkClear,
+                             @Value("${cms.keys.corehost-zpk-name}") String zpkName) {
         this.codec = codec;
         this.jdbc = jdbc;
         this.panCrypto = panCrypto;
@@ -80,12 +92,15 @@ public class CorehostSimulator {
         this.port = port;
         this.zpk.set(HEX.parseHex(zpkClear));
         this.zmk = HEX.parseHex(zmkClear);
+        this.imk = HEX.parseHex(imkClear);
+        this.zpkName = zpkName;
     }
 
     public Map<String, Object> status() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("target", host + ":" + port);
         m.put("acquirerZpkKcv", kcv(zpk.get()));
+        m.put("cmsZpkKcv", activeZpkKcv());
         m.put("sentMessages", sent.size());
         return m;
     }
@@ -95,6 +110,7 @@ public class CorehostSimulator {
     public SimResult send(SimRequest r) throws ISOException, IOException {
         String type = r.type() == null ? "BALANCE_INQUIRY" : r.type();
         boolean advice = Boolean.TRUE.equals(r.advice());
+        syncZpk();
 
         // a repeat resends the stored frame of an earlier message (MTI xxx1), to test duplicate handling
         if (Boolean.TRUE.equals(r.repeat()) && r.originalRef() != null) {
@@ -143,6 +159,7 @@ public class CorehostSimulator {
         m.set(22, channel.equals("ECOM") ? "100010000000" : "210101210000");
         m.set(26, r.mcc() != null ? r.mcc() : channel.equals("ATM") ? "6011" : "5411");
         m.set(32, acquirer);
+        if (r.country() != null && r.country().matches("[0-9]{3}")) m.set(19, r.country());
         m.set(37, now.format(DateTimeFormatter.ofPattern("yyDDD")) + String.format("%07d", Integer.parseInt(s)));
         m.set(41, terminal);
         m.set(42, pad("CMSSIM" + terminal, 15));
@@ -164,6 +181,7 @@ public class CorehostSimulator {
                 m.set(56, orig.mti() + orig.stan() + orig.localDt() + String.format("%02d", orig.acquirerId().length()) + orig.acquirerId());
             }
             if (r.pin() != null && !r.pin().isBlank()) m.set(52, pinBlock(r.pin(), pan));
+            if (Boolean.TRUE.equals(r.chip())) m.set(55, chipData(s, r, pan, pc, amount, currency, now));
             if (type.equals("PIN_CHANGE") && r.newPin() != null) m.set(125, HEX.formatHex(pinBlock(r.newPin(), pan)));
         }
 
@@ -198,6 +216,30 @@ public class CorehostSimulator {
         return r;
     }
 
+    /**
+     * The simulator holds its ZPK in memory only: after a restart it is back to the seed key while the CMS
+     * still has the key from the last 811. A real switch keeps its keys, so here: before sending, compare the
+     * check values and, when they differ, run the key exchange with the key this simulator holds.
+     */
+    private void syncZpk() {
+        String cms = activeZpkKcv();
+        String mine = kcv(zpk.get());
+        if (cms == null || cms.equalsIgnoreCase(mine)) return;
+        log.warn("Simulator ZPK (KCV {}) differs from the CMS acquirer ZPK (KCV {}); re-running key exchange 811", mine, cms);
+        try {
+            SimResult r = network("811", HEX.formatHex(zpk.get()));
+            if (!NetworkManagementService.ACCEPTED.equals(r.actionCode())) {
+                log.warn("Key exchange refused: {} {}", r.actionCode(), r.actionText());
+            }
+        } catch (Exception e) {
+            log.warn("Key exchange failed: {}", e.getMessage());
+        }
+    }
+
+    private String activeZpkKcv() {
+        return jdbc.query("SELECT kcv FROM hsm_key WHERE key_name = ? AND active", rs -> rs.next() ? rs.getString(1) : null, zpkName);
+    }
+
     // ---------------- plumbing ----------------
 
     private SimResult exchange(String ref, ISOMsg m, boolean remember) throws ISOException, IOException {
@@ -229,7 +271,7 @@ public class CorehostSimulator {
         }
         String text = "800".equals(ac) ? "Accepted" : ActionCode.text(ac);
         return new SimResult(ref, m.getMTI(), fields(m), fields(resp), ac, text,
-                ActionCode.isApproval(ac) || "800".equals(ac), ledger, available, ms);
+                ActionCode.isApproval(ac) || "800".equals(ac), ledger, available, ms, chipResult(ref, resp));
     }
 
     /** Fields for display: PAN masked, PIN blocks and key data hidden. */
@@ -241,12 +283,96 @@ public class CorehostSimulator {
             String v = switch (i) {
                 case 2 -> { String p = m.getString(2); yield p.substring(0, 6) + "******" + p.substring(p.length() - 4); }
                 case 52, 125 -> "[PIN block]";
+                case 55 -> "[chip data " + m.getBytes(55).length + " bytes]";
                 case 96 -> "[key data]";
                 default -> m.getString(i);
             };
             f.put(String.valueOf(i), v);
         }
         return f;
+    }
+
+    /** Field 55 as the chip would send it; the ARQC is computed with the dev IMK-AC, like a real card. */
+    private byte[] chipData(String ref, SimRequest r, String pan, String pc, long amount, String currency, LocalDateTime now) {
+        if (r.cardId() == null) throw new IssuanceException("INVALID_REQUEST", "Chip transactions need cardId");
+        Map<String, Object> p = jdbc.queryForMap("""
+                SELECT k.psn, pr.emv_scheme, pr.emv_data_list, pr.scheme FROM card k JOIN card_product pr ON pr.id = k.product_id WHERE k.id = ?
+                """, r.cardId());
+        String psn = (String) p.get("psn");
+        char scheme = "VISA_CVN10".equals(p.get("emv_scheme")) ? '0' : '1';
+        // like a real chip, the counter only goes up: continue after the highest ATC the CMS has seen
+        int atcValue = r.atc() != null ? r.atc() : atcByCard.merge(String.valueOf(r.cardId()), 1,
+                (cur, one) -> cur + one);
+        if (r.atc() == null) {
+            Integer seen = jdbc.queryForObject("SELECT last_atc FROM card WHERE id = ?", Integer.class, r.cardId());
+            if (seen != null && atcValue <= seen) {
+                atcValue = seen + 1;
+                atcByCard.put(String.valueOf(r.cardId()), atcValue);
+            }
+        }
+        byte[] atc = {(byte) (atcValue >> 8), (byte) atcValue};
+        byte[] un = new byte[4];
+        new SecureRandom().nextBytes(un);
+        boolean atm = "ATM".equals(r.channel()) || "01".equals(pc.substring(0, 2)) || "31".equals(pc.substring(0, 2));
+        boolean pinEntered = r.pin() != null && !r.pin().isBlank();
+        String tvr = r.tvr() != null && r.tvr().matches("[0-9A-Fa-f]{10}") ? r.tvr() : "0000000000";
+        Map<String, byte[]> t = new java.util.LinkedHashMap<>();
+        // card and terminal data as a real terminal would send them (profile: contact chip, online-capable)
+        t.put("9F02", HEX.parseHex(String.format("%012d", amount)));
+        t.put("9F03", new byte[6]);
+        t.put("9F1A", HEX.parseHex("0818"));
+        t.put("95", HEX.parseHex(tvr));
+        t.put("5F2A", HEX.parseHex("0" + currency));
+        t.put("9A", HEX.parseHex(now.format(DateTimeFormatter.ofPattern("yyMMdd"))));
+        t.put("9F21", HEX.parseHex(now.format(DateTimeFormatter.ofPattern("HHmmss"))));
+        t.put("9C", HEX.parseHex(pc.substring(0, 2)));
+        t.put("9F37", un);
+        t.put("82", HEX.parseHex("3C00"));
+        t.put("9F36", atc);
+        t.put("9F10", HEX.parseHex(scheme == '0' ? "06010A03A00000" : "06011203A00000"));
+        t.put("9F27", HEX.parseHex("80"));
+        t.put("5F34", HEX.parseHex(psn));
+        t.put("84", HEX.parseHex(switch (String.valueOf(p.get("scheme"))) {
+            case "VISA" -> "A0000000031010";
+            case "MASTERCARD" -> "A0000000041010";
+            default -> "F0000000010001";     // proprietary (unregistered) RID for domestic/test products
+        }));
+        t.put("9F09", HEX.parseHex("VISA".equals(p.get("scheme")) ? "008C" : "0002"));
+        t.put("9F07", HEX.parseHex("FF00"));
+        t.put("9F33", HEX.parseHex(atm ? "6040E8" : "E0F8C8"));
+        t.put("9F35", HEX.parseHex(atm ? "14" : "22"));
+        t.put("9F34", HEX.parseHex(pinEntered ? "420300" : "1F0302"));
+        t.put("9B", HEX.parseHex("E800"));
+        t.put("9F1E", "SIMTERM1".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        t.put("9F41", HEX.parseHex("00" + ref));
+        byte[] data = com.cms.emv.EmvService.dataBlockFor(t, (String) p.get("emv_data_list"));
+        byte[] key = com.cms.emv.EmvCrypto.cryptogramKey(imk, com.cms.emv.EmvService.y(pan, psn), atc, scheme);
+        byte[] arqc = com.cms.emv.EmvCrypto.arqc(key, data, scheme);
+        if (Boolean.TRUE.equals(r.tamperArqc())) arqc[0] ^= 0x01;
+        t.put("9F26", arqc);
+        byte[] field55 = com.cms.emv.Tlv.encode(t);
+        chipState.put(ref, new byte[][]{key, arqc, atc, field55});
+        return field55;
+    }
+
+    /** What the card would conclude from the answer: ARPC present and valid for the returned ARC. */
+    private Map<String, Object> chipResult(String ref, ISOMsg resp) throws ISOException {
+        byte[][] st = chipState.remove(ref);
+        if (st == null) return null;
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("atc", ((st[2][0] & 0xFF) << 8) | (st[2][1] & 0xFF));
+        // raw DE55 both ways, for the decoder in the console (dev simulator data only: no track-2 equivalent)
+        out.put("requestIcc", HEX.formatHex(st[3]));
+        out.put("responseIcc", resp.hasField(55) ? HEX.formatHex(resp.getBytes(55)) : null);
+        byte[] iad = resp.hasField(55) ? com.cms.emv.Tlv.parse(resp.getBytes(55)).get("91") : null;
+        out.put("arpcReceived", iad != null);
+        if (iad != null && iad.length == 10) {
+            byte[] arc = java.util.Arrays.copyOfRange(iad, 8, 10);
+            byte[] expected = com.cms.emv.EmvCrypto.arpc(st[0], st[1], arc);
+            out.put("arc", new String(arc, java.nio.charset.StandardCharsets.US_ASCII));
+            out.put("arpcValid", java.util.Arrays.equals(expected, java.util.Arrays.copyOf(iad, 8)));
+        }
+        return out;
     }
 
     private String resolvePan(SimRequest r) {

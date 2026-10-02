@@ -1,5 +1,6 @@
 package com.cms.iso;
 
+import com.cms.auth.ActionCode;
 import com.cms.auth.AuthRequest;
 import com.cms.auth.AuthResponse;
 import com.cms.auth.AuthorizationService;
@@ -126,24 +127,48 @@ public class IsoServer implements SmartLifecycle {
             log.error("Unparseable message from {} ({} bytes): {}", peer, frame.length, e.getMessage());
             return;
         }
+        ISOMsg req = in.msg();
+        ISOMsg resp;
+        boolean mapped = false;
         try {
-            ISOMsg req = in.msg();
             log.info("<- {}", IsoCodec.summary(req));
-            ISOMsg resp;
             if (IsoMapper.isNetworkManagement(req)) {
                 resp = network.handle(req, codec, peer);
             } else {
                 AuthRequest ar = IsoMapper.toRequest(req);
+                mapped = true;
                 AuthResponse r = auth.authorize(ar);
                 resp = IsoMapper.toResponse(req, r, codec, this::numericCurrency);
             }
+        } catch (Exception e) {
+            log.error("Failed to process message from {}: {}", peer, e.getMessage(), e);
+            resp = failureResponse(req, mapped ? ActionCode.SYSTEM_MALFUNCTION : ActionCode.FORMAT_ERROR);
+            if (resp == null) return;
+        }
+        try {
             byte[] packed = codec.pack(resp);
             synchronized (out) {
                 codec.writeFrame(out, in.header(), packed);
             }
             log.info("-> {}", IsoCodec.summary(resp));
         } catch (Exception e) {
-            log.error("Failed to process message from {}: {}", peer, e.getMessage(), e);
+            log.error("Failed to send the response to {}: {}", peer, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Answer for a request that failed outside the authorization engine (which records its own 909s):
+     * 904 when the request could not be mapped, 909 otherwise, so the switch is not left to time out.
+     * Network management has no action-code answer here; it is only logged.
+     */
+    private ISOMsg failureResponse(ISOMsg req, String actionCode) {
+        try {
+            if (IsoMapper.isNetworkManagement(req)) return null;
+            return IsoMapper.toResponse(req, AuthResponse.decline(actionCode, ActionCode.text(actionCode), null),
+                    codec, this::numericCurrency);
+        } catch (Exception e) {
+            log.error("Could not build a {} response: {}", actionCode, e.getMessage());
+            return null;
         }
     }
 

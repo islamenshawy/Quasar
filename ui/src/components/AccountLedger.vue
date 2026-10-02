@@ -38,7 +38,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Notify, useQuasar } from 'quasar'
 import TxnTable from './TxnTable.vue'
-import { api, qs } from '../lib/api.js'
+import { api, pending, qs } from '../lib/api.js'
 import { dateTime, label, money } from '../lib/format.js'
 
 const $q = useQuasar()
@@ -94,8 +94,8 @@ function release (h) {
     prompt: { model: '', type: 'text', label: 'Reason', isValid: v => !!(v && v.trim()), outlined: true },
     cancel: true
   }).onOk(async reason => {
-    await api.post(`/admin/holds/${h.id}/release`, { reason })
-    Notify.create({ type: 'positive', message: 'Hold released' })
+    const res = await api.post(`/admin/holds/${h.id}/release`, { reason })
+    if (!pending(res)) Notify.create({ type: 'positive', message: 'Hold released' })
     await loadHolds()
     emit('changed')
   })

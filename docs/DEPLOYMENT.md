@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Applies to | cms-core **0.4.0** with the CMS Console (CMS-070 to CMS-075), hsm-sim **1.0.0** |
+| Applies to | cms-core **0.4.0** with the Quasar console (CMS-070 to CMS-075), hsm-sim **1.0.0** |
 | Environments covered | DEV (developer laptop), TEST (shared test server) |
 | Owner | Development chapter, tech lead |
 | Last updated | 2026-09-30 |
@@ -20,10 +20,10 @@
 | Database | Local PostgreSQL | PostgreSQL on the server |
 | How it runs | `mvn spring-boot:run` or `java -jar` | `systemd` services |
 | Spring profile | `dev` | `test` (you create `application-test.yml`, see §9.3) |
-| CMS Console | `http://localhost:8080/` (or `:9000` with `npm run dev`, §6.3) | `http://<server>:8080/` from the test subnet only |
+| Quasar console | `http://localhost:8080/` (or `:9000` with `npm run dev`, §6.3) | `http://<server>:8080/` from the test subnet only |
 | Data | Test data only | Test data only. **Never real cards, PANs or keys.** |
 
-The CMS Console is part of the cms-core jar. There is no separate web server or front-end deployment.
+The Quasar console is part of the cms-core jar. There is no separate web server or front-end deployment.
 
 ---
 
@@ -86,7 +86,7 @@ cms/
 ├── docs/                        DEPLOYMENT, TESTING, DECISIONS, ROADMAP
 ├── hsm-sim/HsmSimulator.java    payShield simulator (single file, no build)
 ├── scripts/                     seed-dev.sql, smoke-test.sh
-├── ui/                          CMS Console (Vue 3 + Quasar); built into the jar by Maven
+├── ui/                          Quasar console (Vue 3 + Quasar); built into the jar by Maven
 └── src/main/...                 CMS source, config, Flyway migrations
 ```
 
@@ -126,7 +126,14 @@ The CMS reads configuration from `application.yml`, from the active profile file
 | `SPRING_DATASOURCE_URL` | no | default `jdbc:postgresql://localhost:5432/cms` | Override for another host **or port**, e.g. `jdbc:postgresql://localhost:1455/cms` if PostgreSQL was installed on a non-default port |
 | `CMS_PAN_ENC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
 | `CMS_PAN_HMAC_KEY` | TEST: yes | dev profile has a fixed default | 32 random bytes, base64 |
+| `CMS_PAN_KEY_CHECK` | no | `FAIL` (dev: `WARN`) | Startup check of the PAN keys against the newest live cards. FAIL refuses to start when they match none of them; WARN only logs |
 | `CMS_HSM_HOST` / `CMS_HSM_PORT` | no | `localhost` / `1500` | Point at the real payShield later |
+| `CMS_ADMIN_PASSWORD` | first start | dev profile has its own users | Password of the bootstrap `admin` (must be changed at first sign-in). Empty = generated and written to the log once |
+| `CMS_DEXXIS_API_KEY` | TEST: yes | `dev-dexxis-key` | Key Dexxis sends in `X-Api-Key`. Empty = Dexxis calls refused. Long random value, e.g. `openssl rand -hex 32` |
+| `CMS_DEV_PASSWORD` | no | `Dev-Passw0rd!` | DEV only: password of the dev users admin, supervisor, supervisor2, operator, viewer |
+| `CMS_CORE_BANKING_URL` | for core accounts | dev: in-process simulator | Base URL of the core banking funds API (provisional contract, IN-06). Empty = not connected: cards on `CORE_BANKING` accounts approve only within their stand-in limit |
+| `CMS_CORE_BANKING_API_KEY` / `CMS_CORE_BANKING_TIMEOUT_MS` | no | `dev-core-key` / `3000` | Sent as `X-Api-Key`; timeout per call (the switch waits for the answer, keep it well under the switch timeout) |
+| `CMS_CHANNEL_API_KEY` | no | `dev-channel-key` | Key for `/api/channel/**` (ACS, mobile, IVR). Empty = refused |
 | `CMS_ISO_PORT` / `CMS_ISO_ENABLED` | no | `7000` / `true` | BASE24 switch interface. Also `cms.iso.length-prefix` (BINARY2 / ASCII4) and `cms.iso.header-length`; set them from the BASE24 spec |
 
 > **Important:** the PAN keys encrypt card numbers at rest. If you change them, existing cards can no longer be decrypted. On TEST, generate them once (`openssl rand -base64 32`), store them in the env file (§9.2), and never rotate them casually.
@@ -177,7 +184,7 @@ Useful options:
 mvn clean verify        # console build + compile + unit tests + jar with version info
 ```
 
-One build produces one jar that contains the backend **and** the CMS Console:
+One build produces one jar that contains the backend **and** the Quasar console:
 
 1. `frontend-maven-plugin` installs its own Node (version in `pom.xml`, `node.version`) into `target/node`. Your installed Node, if any, is not used.
 2. `npm install` in `ui/` (exact versions from `ui/package-lock.json`), then `npm run build` into `ui/dist/`.
@@ -201,7 +208,14 @@ On first start, Flyway creates the schema (migrations V1 to V5). The log shows `
 
 The CMS starts even if the HSM is down, because HSM connections are opened on first use. Check the HSM state with the health endpoint (§8).
 
-Open the console at `http://localhost:8080/`. On first visit it asks for an **operator id**, which is stored in the browser and sent with every change (`X-Operator`). This is test-mode identification only; real sign-in comes with CMS-060. The old `http://localhost:8080/issuance.html` redirects to **Issue card**.
+Open the console at `http://localhost:8080/` and **sign in**:
+
+- **DEV profile:** users `admin`, `supervisor`, `supervisor2`, `operator`, `viewer`, password `Dev-Passw0rd!` (or `CMS_DEV_PASSWORD`).
+- **Other profiles:** the first start creates `admin` with `CMS_ADMIN_PASSWORD`, or with a generated password printed once in the log (`No users found. Created 'admin'...`). Sign in, change it, then create named users under **Control → Users**. Do not share accounts: every change and approval is recorded under the user.
+
+Roles: **ADMIN** (users, approval policy), **SUPERVISOR** (setup changes, approvals), **OPERATOR** (customers, accounts, cards, entries), **VIEWER** (read only). Changes covered by the approval policy wait in **Approvals** until a *different* supervisor approves them.
+
+The old `http://localhost:8080/issuance.html` redirects to **Issue card**.
 
 ### 6.3 Console development (hot reload)
 
@@ -232,7 +246,7 @@ It loads:
 
 After seeding, products and eligibility are maintained in the console (§7.1). Only the **HSM keys** still need SQL, because the console never handles key material.
 
-### 7.1 First-time configuration in the CMS Console
+### 7.1 First-time configuration in the Quasar console
 
 Migrations seed a starting set of currencies (EGP, USD, AED), segments and account types. Review them under **Setup**, in this order, since each step uses the previous one:
 
@@ -260,7 +274,11 @@ Run these checks in order. Each must pass before moving to the next.
 | 3 | Console | Open `http://localhost:8080/` | Dashboard loads and the header shows **HSM UP**; Setup → Account types lists the seeded types |
 | 4 | Smoke test | `./scripts/smoke-test.sh` | `15 passed, 0 failed` |
 | 5 | Authorization (DEV only) | `./scripts/auth-test.sh` | `32 passed, 0 failed` |
-| 5b | BASE24 interface (DEV only) | `./scripts/iso-test.sh` | `18 passed, 0 failed` |
+| 5b | BASE24 interface (DEV only) | `./scripts/iso-test.sh` | `22 passed, 0 failed` |
+| 5c | Security (DEV only) | `./scripts/security-test.sh` | `30 passed, 0 failed` |
+| 5d | Card lifecycle (DEV only) | `./scripts/lifecycle-test.sh` | `27 passed, 0 failed` |
+| 5e | Core banking (DEV only) | `./scripts/core-test.sh` | `25 passed, 0 failed` |
+| 5f | Fraud rules (DEV only) | `./scripts/fraud-test.sh` | `24 passed, 0 failed` |
 | 6 | Console flow | In the console: Issue card → pick or create a customer → open or pick an account → issue a card | Full card number shown once; the card appears under Cards as **Pending print** |
 
 If all checks pass, the deployment is good. Check 5 needs the `dev` profile, because it uses the dev-only `/api/dev/authorize` endpoint; skip it on TEST. For a full UI check, run the manual cases in [TESTING.md](TESTING.md) §4. Record the result in [TESTING.md](TESTING.md) §6.
@@ -378,7 +396,7 @@ Then run the checks in §8 against the server.
 sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 ```
 
-> **The console has no login yet.** Anyone who can reach port 8080 can change setup, block cards and issue cards (which shows a full PAN). The operator id is self-declared. Keep 8080 restricted to named test users until operator authentication (CMS-060) is in place.
+> **Sign-in is local users over plain HTTP in TEST.** Put the CMS behind TLS before any shared use (reverse proxy or `server.ssl.*`) and then set `server.servlet.session.cookie.secure=true`. Keep 8080 restricted to the test subnet and Dexxis; the BASE24 port (7000) to the switch only.
 
 ### 9.7 Upgrade procedure (every new version)
 
@@ -390,13 +408,18 @@ sudo ufw allow from <test-subnet> to any port 8080 proto tcp
 5. Verify with §8: the version must show the new number, and the smoke test must pass.
 6. Record the deployment in [TESTING.md](TESTING.md) §6.
 
-**Upgrading to the CMS Console release (migration V4):**
+**Upgrading to the Quasar console release (migration V4):**
 
 - V4 is additive and keeps current behaviour: every account type stays CMS-generated from the `ACCOUNT` sequence (continuing after the last `account_number_seq` value), allows every existing currency, and the CIF source is `EITHER`.
 - Back up first (step 2). V4 cannot be undone except by restoring that backup.
 - Never start a feature-branch build against a shared database. Once a migration has run, its file can no longer change (Flyway checksum), so a branch build can block the next release.
 - After the restart, check Setup → Numbering & settings (the `ACCOUNT` next number is above the highest existing account number) and Setup → Account types before operators start working.
 - **V5 (authorization and ledger)** is also additive: products keep their limits (purchase amount limits follow the ATM limits until set), fees are zero and e-commerce is off. Set fees, purchase limits and channels per product under Setup → Card products → *Channels, purchases and fees*.
+- **V6 (users, roles, maker-checker):** on the first start after upgrading, the CMS creates `admin` (see §6.2). Give Dexxis the API key (`CMS_DEXXIS_API_KEY`) **before** upgrading, or perso and activation calls fail with 401. Update any script that called the admin API to sign in (HTTP Basic) and to handle 202 approval responses.
+- **V7 (card lifecycle, batch):** the batch scheduler starts with the CMS. Review **Control → Batch jobs** after the upgrade: CARD_RENEWAL will create renewal cards for every live card expiring within its product's lead days (default 30) at 01:00, and STALE_PENDING_PRINT cancels cards not printed within 30 days. Switch a job off, or change the product settings, before the first night if that is not wanted. To stop all scheduled runs on an instance set `cms.batch.scheduler-enabled=false`.
+- **V10 (fraud):** nothing changes until rules are switched on: the seven starter rules are installed inactive. Check `institution.country` (default 818) under Setup → Numbering & settings, agree thresholds with the fraud team, then activate rules one by one and watch Operations → Fraud alerts. The BASE24 packager now maps field 19 (acquirer country, provisional with IN-01).
+- **V9 (core banking):** no change for existing accounts (all `CMS_LEDGER`). To use core banking accounts, set `CMS_CORE_BANKING_URL` (and key), create an account type with ledger mode `CORE_BANKING`, and set each product's stand-in limit. Watch Control → Core banking for failed postings. On DEV, rerun `scripts/seed-dev.sql` (adds `CORE_CURRENT`).
+- **V8 (EMV):** chip cryptograms are checked only for products with an IMK-AC key. On DEV, rerun `scripts/seed-dev.sql` (adds IMK_AC_P01 and links P01/P02) and restart hsm-sim so it runs **1.1.0** (`java hsm-sim/HsmSimulator.java selftest` must list the KQ cases). On a real payShield, import the issuer IMK-AC and confirm the KQ layout before enabling it on a product.
 - Admin API changes for any script that calls it: `GET /api/admin/customers` returns a page `{items, total, page, size}`, and `/api/admin/reference` returns full objects (see CHANGELOG, **Breaking**).
 
 ### 9.8 Rollback
@@ -429,6 +452,7 @@ The simulator uses the **same clear test keys** you will load into the payShield
 | `Validate failed: Migrations have failed validation` | An applied migration file was edited | Never edit applied migrations (see CONTRIBUTING). Restore the original file. |
 | Health shows `DOWN` / `cannot connect to HSM` | Simulator not running, wrong port | Start hsm-sim, check `cms.hsm.port` |
 | `HSM header mismatch` | Header length differs between CMS and HSM | Align `header-length` with the HSM setting |
+| `PAN_KEY_MISMATCH`, or at startup `CMS_PAN_ENC_KEY does not decrypt card(s) [...]` | The CMS runs with different PAN keys from the ones those cards were issued under (often: variables not set in this terminal, so the dev default is used) | Start with the original `CMS_PAN_ENC_KEY` / `CMS_PAN_HMAC_KEY`. If they are lost, those card numbers cannot be recovered: cancel the cards and reissue |
 | `HSM_ERROR ... / 15` | Input data error, wrong field layout or key token | Check the key rows in `hsm_key`; on a real HSM, check the command layout |
 | `KEY_MISSING` | Seed not loaded or key name differs | Run `seed-dev.sql`; check product key names |
 | `PRODUCT_NOT_ELIGIBLE` / "No product is allowed" in Issue card | No eligibility for that account type × segment, or the currency differs | Setup → Card products → product → Eligibility; check the product and account currency |

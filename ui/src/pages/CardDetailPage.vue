@@ -9,9 +9,13 @@
           account <router-link :to="`/accounts/${k.accountId}`" class="mono">{{ k.accountNumber }}</router-link>
         </template>
         <template #actions>
-          <q-btn v-if="k.status === 'ACTIVE' && k.pinTries > 0" outline no-caps color="primary" icon="password"
+          <q-btn v-if="can.write && k.status === 'ACTIVE' && k.pinTries > 0" outline no-caps color="primary" icon="password"
                  :label="`Reset PIN tries (${k.pinTries})`" @click="resetTries" />
-          <StatusAction :current="k.status" :targets="k.allowedTransitions" entity="card" :on-change="changeStatus" />
+          <q-btn v-if="can.write && k.status === 'PENDING_PRINT'" outline no-caps color="primary" icon="visibility"
+                 label="Show number for printing" @click="reveal" />
+          <q-btn v-if="can.write && replaceable" outline no-caps color="primary" icon="autorenew" label="Replace card"
+                 @click="replaceDialog = true" />
+          <StatusAction v-if="can.write" :current="k.status" :targets="k.allowedTransitions" entity="card" :on-change="changeStatus" />
         </template>
       </PageHeader>
 
@@ -28,13 +32,17 @@
             <template #avatar><q-icon name="password" color="warning" /></template>
             PIN tries exhausted ({{ k.pinTries }}/{{ k.pinTryLimit }}). Reactivating resets the counter.
           </q-banner>
-          <CardLimitsCard class="q-mt-md" :card-id="k.id" :editable="!['LOST','STOLEN','EXPIRED','CANCELLED'].includes(k.status)" />
+          <CardLimitsCard class="q-mt-md" :card-id="k.id" :editable="can.write && !['LOST','STOLEN','EXPIRED','CANCELLED'].includes(k.status)" />
         </div>
         <div class="col-12 col-md-7">
           <q-card flat bordered>
             <q-card-section>
               <dl class="dl">
-                <dt>Card number</dt><dd class="mono">{{ k.maskedPan }}</dd>
+                <dt>Card number</dt><dd class="mono">{{ k.maskedPan }} · PSN {{ k.psn }}</dd>
+                <dt v-if="k.replacesCardId">Replaces</dt>
+                <dd v-if="k.replacesCardId"><router-link :to="`/cards/${k.replacesCardId}`">card #{{ k.replacesCardId }}</router-link> · {{ label(k.replacementReason) }}</dd>
+                <dt v-if="k.replacedByCardId">Replaced by</dt>
+                <dd v-if="k.replacedByCardId"><router-link :to="`/cards/${k.replacedByCardId}`">card #{{ k.replacedByCardId }}</router-link></dd>
                 <dt>Product</dt><dd>{{ k.productName }} <span class="mono muted">{{ k.productCode }}</span></dd>
                 <dt>Type / tier / scheme</dt><dd>{{ label(k.cardType) }} · {{ label(k.cardTier) }} · {{ k.scheme }}</dd>
                 <dt>Name on card</dt><dd class="mono">{{ k.embossingName }}</dd>
@@ -76,22 +84,38 @@
           </q-tab-panel>
         </q-tab-panels>
       </q-card>
+      <ReplaceCardDialog v-model="replaceDialog" :card="k" @done="load" />
+      <q-dialog v-model="panDialog" @hide="revealed = ''">
+        <q-card style="width: 440px; max-width: 95vw">
+          <q-card-section>
+            <div class="text-h6">Card number for printing</div>
+            <div class="text-body2 muted">Recorded in the audit log. Enter it in Dexxis, then close.</div>
+            <div class="mono text-h5 q-my-md" style="letter-spacing: .06em">{{ revealed.replace(/(.{4})(?=.)/g, '$1 ') }}</div>
+          </q-card-section>
+          <q-card-actions align="right">
+            <q-btn flat no-caps icon="content_copy" label="Copy" @click="copyToClipboard(revealed)" />
+            <q-btn unelevated no-caps color="primary" label="Close" v-close-popup />
+          </q-card-actions>
+        </q-card>
+      </q-dialog>
     </template>
     <div v-else class="flex flex-center q-pa-xl"><q-spinner size="40px" color="primary" /></div>
   </q-page>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { Notify, useQuasar } from 'quasar'
+import { computed, onMounted, ref } from 'vue'
+import { Notify, copyToClipboard, useQuasar } from 'quasar'
 import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import StatusAction from '../components/StatusAction.vue'
 import CardPreview from '../components/CardPreview.vue'
 import AuditTrail from '../components/AuditTrail.vue'
 import CardLimitsCard from '../components/CardLimitsCard.vue'
+import ReplaceCardDialog from '../components/ReplaceCardDialog.vue'
 import TxnTable from '../components/TxnTable.vue'
-import { api } from '../lib/api.js'
+import { api, pending } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { dateTime, expiry, label, statusColor } from '../lib/format.js'
 
 const $q = useQuasar()
@@ -101,6 +125,17 @@ const props = defineProps({ id: { type: String, required: true } })
 const k = ref(null)
 const history = ref([])
 const tab = ref('transactions')
+const replaceDialog = ref(false)
+const panDialog = ref(false)
+const revealed = ref('')
+const replaceable = computed(() => ['ACTIVE', 'BLOCKED', 'PIN_BLOCKED', 'LOST', 'STOLEN', 'EXPIRED'].includes(k.value?.status) && !k.value?.replacedByCardId)
+
+async function reveal () {
+  try {
+    revealed.value = (await api.post(`/admin/cards/${props.id}/reveal-pan`, {})).pan
+    panDialog.value = true
+  } catch { /* shown */ }
+}
 const trail = ref(null)
 
 async function load () {
@@ -111,8 +146,8 @@ async function load () {
 }
 
 async function changeStatus (status, reason) {
-  k.value = await api.post(`/admin/cards/${props.id}/status`, { status, reason })
-  Notify.create({ type: 'positive', message: `Card is now ${label(status).toLowerCase()}` })
+  const res = await api.post(`/admin/cards/${props.id}/status`, { status, reason })
+  if (!pending(res)) Notify.create({ type: 'positive', message: `Card is now ${label(status).toLowerCase()}` })
   load()
 }
 
@@ -123,8 +158,8 @@ function resetTries () {
     prompt: { model: '', type: 'text', label: 'Reason', isValid: v => !!(v && v.trim()), outlined: true },
     cancel: true
   }).onOk(async reason => {
-    k.value = await api.post(`/admin/cards/${props.id}/reset-pin-tries`, { reason })
-    Notify.create({ type: 'positive', message: 'PIN tries reset' })
+    const res = await api.post(`/admin/cards/${props.id}/reset-pin-tries`, { reason })
+    if (!pending(res)) Notify.create({ type: 'positive', message: 'PIN tries reset' })
     load()
   })
 }

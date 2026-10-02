@@ -10,14 +10,31 @@ set -uo pipefail
 BASE="${1:-http://localhost:8080}"
 SIM="$(dirname "$0")/../hsm-sim/HsmSimulator.java"
 KIOSK_ZPK_CLEAR="0B0B0B0B0B0B0B0B1616161616161616"   # matches ZPK_KIOSK in seed-dev.sql
-OP="smoke"
 RUN_ID="$(date +%s)"
 PASS=0; FAIL=0
 
 ok()   { echo "  PASS  $1"; PASS=$((PASS+1)); }
 bad()  { echo "  FAIL  $1  ->  $2"; FAIL=$((FAIL+1)); }
-post() { curl -s -w '\n%{http_code}' -X POST "$BASE$1" -H 'Content-Type: application/json' -H "X-Operator: $OP" -d "$2"; }
-get()  { curl -s -w '\n%{http_code}' "$BASE$1" -H "X-Operator: $OP"; }
+W=$'\n%{http_code}'   # post/get append the HTTP status on a last line
+# Credentials (dev profile defaults). Operator makes changes; supervisor approves maker-checker requests.
+CMS_USER="${CMS_USER:-operator}"; CMS_PASSWORD="${CMS_PASSWORD:-Dev-Passw0rd!}"
+SUP_USER="${SUP_USER:-supervisor}"; SUP_PASSWORD="${SUP_PASSWORD:-Dev-Passw0rd!}"
+DEXXIS_KEY="${CMS_DEXXIS_API_KEY:-dev-dexxis-key}"
+post() { # Dexxis endpoints authenticate with the API key, everything else as the operator
+  case "$1" in
+    /api/dexxis/*) curl -s -w "${W:-}" -X POST "$BASE$1" -H 'Content-Type: application/json' -H "X-Api-Key: $DEXXIS_KEY" -d "$2" ;;
+    *)             curl -s -w "${W:-}" -X POST "$BASE$1" -H 'Content-Type: application/json' -u "$CMS_USER:$CMS_PASSWORD" -d "$2" ;;
+  esac
+}
+get()  { curl -s -w "${W:-}" "$BASE$1" -u "$CMS_USER:$CMS_PASSWORD"; }
+put()  { curl -s -X PUT "$BASE$1" -H 'Content-Type: application/json' -u "$CMS_USER:$CMS_PASSWORD" -d "$2"; }
+# approve <response json>: if the response is a pending maker-checker request, approve it as the supervisor
+approve() {
+  local id; id=$(echo "$1" | jq -r '.requestId // empty' 2>/dev/null)
+  [ -z "$id" ] && { echo "$1"; return; }
+  curl -s -X POST "$BASE/api/admin/approvals/$id/approve" -H 'Content-Type: application/json' \
+       -u "$SUP_USER:$SUP_PASSWORD" -d '{"comment":"approved by test"}'
+}
 body() { echo "$1" | sed '$d'; }
 code() { echo "$1" | tail -n1; }
 

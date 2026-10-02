@@ -1,9 +1,13 @@
 package com.cms.api;
 
+import com.cms.security.Operator;
 import com.cms.account.AccountService;
 import com.cms.account.AccountService.AccountView;
 import com.cms.api.CustomerController.StatusRequest;
 import com.cms.common.Page;
+import com.cms.approval.ApprovalActions;
+import com.cms.approval.ApprovalService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /** Account search and status maintenance. Issuing cards on an account is in {@link IssuanceController}. */
@@ -12,9 +16,11 @@ import org.springframework.web.bind.annotation.*;
 public class AccountController {
 
     private final AccountService accounts;
+    private final ApprovalService approvals;
 
-    public AccountController(AccountService accounts) {
+    public AccountController(AccountService accounts, ApprovalService approvals) {
         this.accounts = accounts;
+        this.approvals = approvals;
     }
 
     @GetMapping
@@ -33,8 +39,8 @@ public class AccountController {
     }
 
     @PostMapping("/{id}/status")
-    public AccountView status(@PathVariable long id, @RequestBody StatusRequest req,
-                              @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
-        return accounts.changeStatus(id, req.status(), req.reason(), op);
+    public ResponseEntity<Object> status(@PathVariable long id, @RequestBody StatusRequest req, @Operator String op) {
+        return approvals.submit("ACCOUNT_STATUS", "account", id, "Account " + accounts.getAccount(id).accountNumber()
+                + " -> " + req.status(), new ApprovalActions.StatusChange(id, req.status(), req.reason()), op).toResponse();
     }
 }

@@ -28,7 +28,20 @@ public record AuthRequest(
         String cardAcceptor,        // field 43; optional
         boolean advice,             // stand-in advice from the switch: record and post, never decline
         OriginalRef original,       // reversal / completion: the original message
-        Long amountCompleted) {     // reversal: amount actually completed (dispensed); 0 or null = full
+        Long amountCompleted,       // reversal: amount actually completed (dispensed); 0 or null = full
+        String iccData,             // field 55 as hex; chip transactions only. Never logged.
+        String acquirerCountry) {   // field 19, ISO 3166 numeric; optional (null = institution country)
+
+    /** Without chip data (magstripe, manual, tests). */
+    public AuthRequest(TxnType type, Channel channel, String mti, String processingCode, String pan, String expiryYYMM,
+                       String track2, String pinBlock, String newPinBlock, long amount, String currencyNumeric,
+                       String stan, String rrn, String transmissionDt, String localDt, String acquirerId,
+                       String terminalId, String merchantType, String cardAcceptor, boolean advice,
+                       OriginalRef original, Long amountCompleted) {
+        this(type, channel, mti, processingCode, pan, expiryYYMM, track2, pinBlock, newPinBlock, amount, currencyNumeric,
+                stan, rrn, transmissionDt, localDt, acquirerId, terminalId, merchantType, cardAcceptor, advice, original,
+                amountCompleted, null, null);
+    }
 
     /**
      * Original data elements (field 56): identify the transaction a reversal or completion refers to.

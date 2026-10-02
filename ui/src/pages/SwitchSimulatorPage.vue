@@ -61,6 +61,22 @@
                 </div>
               </div>
               <q-input v-if="f.channel !== 'ATM'" v-model="f.merchant" outlined dense maxlength="40" label="Merchant name / location" />
+              <div class="row q-col-gutter-sm">
+                <div class="col-6">
+                  <q-input v-model="f.mcc" outlined dense maxlength="4" label="MCC" class="mono"
+                           :hint="f.channel === 'ATM' ? 'Default 6011 (ATM)' : 'Default 5411; 7995 gambling, 4829 money transfer'" />
+                </div>
+                <div class="col-6">
+                  <q-input v-model="f.country" outlined dense maxlength="3" label="Acquirer country (field 19)" class="mono"
+                           hint="Blank = domestic; e.g. 840 US, 784 UAE" />
+                </div>
+              </div>
+              <q-toggle v-model="f.chip" label="Chip (EMV): send field 55 with an ARQC" :disable="f.channel === 'ECOM'" />
+              <q-select v-if="f.chip" v-model="f.tvr" :options="tvrOptions" emit-value map-options outlined dense
+                        label="Terminal verification results (TVR, tag 95)">
+                <template #append><span class="mono text-caption">{{ f.tvr }}</span></template>
+              </q-select>
+              <q-toggle v-if="f.chip" v-model="f.tamper" label="Tamper with the ARQC (should decline 129)" color="negative" />
               <q-toggle v-model="f.advice" label="Send as stand-in advice (x220 / x120)" :disable="!['WITHDRAWAL','PURCHASE','PREAUTH'].includes(f.type)" />
             </q-card-section>
             <q-card-actions class="q-px-md q-pb-md">
@@ -81,6 +97,20 @@
             <q-space />
             <span class="text-caption muted">{{ last.elapsedMs }} ms</span>
           </q-card-section>
+          <q-card-section v-if="last.chip" class="q-pt-none text-body2 row items-center q-gutter-sm">
+            <q-icon name="sim_card" />
+            <span>Chip ATC {{ last.chip.atc }}:</span>
+            <q-badge v-if="!last.chip.arpcReceived" color="grey-6" label="no ARPC returned" />
+            <q-badge v-else :color="last.chip.arpcValid ? 'positive' : 'negative'"
+                     :label="last.chip.arpcValid ? `ARPC valid · ARC ${last.chip.arc}` : 'ARPC invalid'" />
+          </q-card-section>
+          <q-card-section v-if="last.chip?.requestIcc" class="q-pt-none">
+            <q-tabs v-model="iccTab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-sm">
+              <q-tab name="request" :label="`Request DE55 (${last.mti})`" />
+              <q-tab name="response" :label="`Response DE55 (${last.response['0']})`" :disable="!last.chip.responseIcc" />
+            </q-tabs>
+            <EmvTlvViewer :hex="iccTab === 'response' ? last.chip.responseIcc : last.chip.requestIcc" />
+          </q-card-section>
           <q-card-section v-if="last.availableBalance != null" class="q-pt-none text-body2">
             Ledger <b class="mono">{{ money(last.ledgerBalance) }}</b> · Available <b class="mono">{{ money(last.availableBalance) }}</b>
           </q-card-section>
@@ -94,6 +124,17 @@
               </q-markup-table>
             </div>
           </q-card-section>
+        </q-card>
+
+        <q-card flat bordered class="q-mb-md">
+          <q-expansion-item icon="memory" label="Decode any DE55" caption="Paste field 55 hex from a log, a trace or another host"
+                            header-class="text-subtitle1 text-weight-medium">
+            <q-card-section class="q-pt-none">
+              <q-input v-model="pasted" outlined dense autogrow type="textarea" class="mono" label="Field 55 (hex)"
+                       placeholder="9F2608... 9F2701 80 9F1007 06011203A00000 ..." />
+              <EmvTlvViewer v-if="pasted.trim()" :hex="pasted" class="q-mt-md" />
+            </q-card-section>
+          </q-expansion-item>
         </q-card>
 
         <q-card flat bordered>
@@ -127,14 +168,19 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Notify, useQuasar } from 'quasar'
 import PageHeader from '../components/PageHeader.vue'
+import EmvTlvViewer from '../components/EmvTlvViewer.vue'
 import { api, qs } from '../lib/api.js'
+import { TVR_PRESETS } from '../lib/emv.js'
 import { loadReference, reference } from '../lib/reference.js'
 import { label, toMinor, money as fmt } from '../lib/format.js'
 
 const $q = useQuasar()
 
 const typeOptions = ['BALANCE_INQUIRY', 'WITHDRAWAL', 'PURCHASE', 'PREAUTH', 'REFUND', 'PIN_CHANGE'].map(t => ({ label: label(t), value: t }))
-const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false })
+const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000', mcc: '', country: '' })
+const tvrOptions = TVR_PRESETS
+const iccTab = ref('request')
+const pasted = ref('')
 const cardOptions = ref([])
 const cardQuery = ref('')
 const status = ref({})
@@ -190,7 +236,9 @@ async function send () {
     type: f.type, channel: f.channel, cardId: f.card.id, currency: f.currency,
     amount: needsAmount.value ? toMinor(f.amount, exponent) : null,
     pin: f.pin || null, newPin: f.type === 'PIN_CHANGE' ? f.newPin : null,
-    terminalId: f.terminalId || null, merchant: f.merchant || null, advice: f.advice
+    terminalId: f.terminalId || null, merchant: f.merchant || null, advice: f.advice,
+    chip: f.chip && f.channel !== 'ECOM', tamperArqc: f.chip && f.tamper, tvr: f.chip ? f.tvr : null,
+    mcc: /^[0-9]{4}$/.test(f.mcc) ? f.mcc : null, country: /^[0-9]{3}$/.test(f.country) ? f.country : null
   }
   const amt = needsAmount.value ? ` ${f.amount}` : ''
   await post(body, `${label(f.type)}${amt} · ${f.channel} · ${f.card.maskedPan}`, f.type)

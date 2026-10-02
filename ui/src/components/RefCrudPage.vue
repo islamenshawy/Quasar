@@ -5,7 +5,7 @@
         <q-input v-model="filter" dense outlined debounce="200" placeholder="Filter" clearable style="min-width: 200px">
           <template #prepend><q-icon name="search" /></template>
         </q-input>
-        <q-btn unelevated no-caps color="primary" icon="add" :label="`Add ${noun}`" @click="edit(null)" />
+        <q-btn v-if="can.supervise" unelevated no-caps color="primary" icon="add" :label="`Add ${noun}`" @click="edit(null)" />
       </template>
     </PageHeader>
 
@@ -40,7 +40,8 @@
           </q-card-section>
           <q-card-actions align="right" class="q-pa-md">
             <q-btn flat no-caps label="Cancel" v-close-popup />
-            <q-btn type="submit" unelevated no-caps color="primary" label="Save" :loading="busy" />
+            <q-btn v-if="can.supervise" type="submit" unelevated no-caps color="primary" label="Save" :loading="busy" />
+            <span v-else class="text-caption muted">Changes need a supervisor</span>
           </q-card-actions>
         </q-form>
       </q-card>
@@ -53,7 +54,8 @@ import { onMounted, reactive, ref } from 'vue'
 import { Notify } from 'quasar'
 import PageHeader from './PageHeader.vue'
 import DynamicForm from './DynamicForm.vue'
-import { api } from '../lib/api.js'
+import { api, pending } from '../lib/api.js'
+import { can } from '../lib/session.js'
 import { reloadReference } from '../lib/reference.js'
 
 /**
@@ -105,7 +107,7 @@ async function save () {
     const saved = editing.value
       ? await api.put(`${props.endpoint}/${encodeURIComponent(key)}`, form)
       : await api.post(props.endpoint, form)
-    Notify.create({ type: 'positive', message: `${props.noun.charAt(0).toUpperCase() + props.noun.slice(1)} ${saved[props.rowKey]} saved` })
+    if (!pending(saved)) Notify.create({ type: 'positive', message: `${props.noun.charAt(0).toUpperCase() + props.noun.slice(1)} ${saved[props.rowKey]} saved` })
     dialog.value = false
     await load()
     reloadReference().catch(() => {})

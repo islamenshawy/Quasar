@@ -57,7 +57,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Notify } from 'quasar'
-import { api } from '../lib/api.js'
+import { api, pending } from '../lib/api.js'
 import { money, toMajor, toMinor } from '../lib/format.js'
 
 const props = defineProps({ cardId: { type: [Number, String], required: true }, editable: { type: Boolean, default: true } })
@@ -120,14 +120,15 @@ async function save () {
   busy.value = true
   const e = l.value.exponent
   try {
-    l.value = await api.put(`/admin/cards/${props.cardId}/limits`, {
+    const res = await api.put(`/admin/cards/${props.cardId}/limits`, {
       atmEnabled: f.atmEnabled, posEnabled: f.posEnabled, ecomEnabled: f.ecomEnabled,
       dailyWdCountLimit: num(f.dailyWdCountLimit), dailyWdAmountLimit: toMinor(num(f.dailyWdAmountLimit), e),
       perTxnWdLimit: toMinor(num(f.perTxnWdLimit), e), dailyPosCountLimit: num(f.dailyPosCountLimit),
       dailyPosAmountLimit: toMinor(num(f.dailyPosAmountLimit), e), perTxnPosLimit: toMinor(num(f.perTxnPosLimit), e),
       reason: f.reason
     })
-    Notify.create({ type: 'positive', message: 'Controls updated' })
+    if (pending(res)) await load()
+    else { l.value = res; Notify.create({ type: 'positive', message: 'Controls updated' }) }
     dialog.value = false
   } catch { /* shown */ } finally {
     busy.value = false

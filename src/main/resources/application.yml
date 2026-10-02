@@ -8,6 +8,14 @@ spring:
   flyway:
     enabled: true
 
+server:
+  servlet:
+    session:
+      timeout: 30m              # console sign-in session
+      cookie:
+        http-only: true
+        same-site: lax
+
 cms:
   hsm:
     host: 10.0.0.50          # payShield 10K host port IP (test)
@@ -21,10 +29,21 @@ cms:
     # TEST ONLY. Base64 256-bit keys. In production these come from a KMS/HSM, never from config.
     pan-enc-key: ${CMS_PAN_ENC_KEY}
     pan-hmac-key: ${CMS_PAN_HMAC_KEY}
+    pan-key-check: ${CMS_PAN_KEY_CHECK:FAIL}     # FAIL: refuse to start when the keys match none of the newest live cards; WARN: log only
   keys:
     kiosk-zpk-name: ZPK_KIOSK     # ZPK under which the kiosk EPP sends PIN blocks
     corehost-zpk-name: ZPK_COREHOST
     corehost-zmk-name: ZMK_COREHOST   # protects ZPKs received in 1804 key change
+  dexxis:
+    api-key: ${CMS_DEXXIS_API_KEY:}   # X-Api-Key Dexxis must send; empty = Dexxis calls refused
+  channel:
+    api-key: ${CMS_CHANNEL_API_KEY:}  # X-Api-Key for /api/channel (ACS, mobile, IVR); empty = refused
+  core-banking:                       # funds interface for CORE_BANKING accounts (CMS-090, provisional IN-06)
+    base-url: ${CMS_CORE_BANKING_URL:}          # empty = not connected: core accounts decline (stand-in limit aside)
+    api-key: ${CMS_CORE_BANKING_API_KEY:}
+    timeout-ms: ${CMS_CORE_BANKING_TIMEOUT_MS:3000}
+  admin:
+    initial-password: ${CMS_ADMIN_PASSWORD:}   # first start only; generated and logged when empty
   iso:
     # BASE24 ISO 8583:1993 interface for the ATM / POS switch (CMS-051..054). Layout is provisional (IN-01).
     enabled: true

@@ -1,5 +1,6 @@
 package com.cms.api;
 
+import com.cms.security.Operator;
 import com.cms.account.AccountService;
 import com.cms.account.AccountService.AccountView;
 import com.cms.account.AccountService.OpenAccountRequest;
@@ -10,12 +11,15 @@ import com.cms.customer.CustomerService;
 import com.cms.customer.CustomerService.CreateCustomerRequest;
 import com.cms.customer.CustomerService.CustomerView;
 import com.cms.customer.CustomerService.UpdateCustomerRequest;
+import com.cms.approval.ApprovalActions;
+import com.cms.approval.ApprovalService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 
-/** Customer (CIF) maintenance and the customer's accounts. Operator from X-Operator (TEST ONLY). */
+/** Customer (CIF) maintenance and the customer's accounts. Operator is the signed-in user. */
 @RestController
 @RequestMapping("/api/admin/customers")
 public class CustomerController {
@@ -25,11 +29,14 @@ public class CustomerController {
     private final CustomerService customers;
     private final AccountService accounts;
     private final CardAdminService cards;
+    private final ApprovalService approvals;
 
-    public CustomerController(CustomerService customers, AccountService accounts, CardAdminService cards) {
+    public CustomerController(CustomerService customers, AccountService accounts, CardAdminService cards,
+                              ApprovalService approvals) {
         this.customers = customers;
         this.accounts = accounts;
         this.cards = cards;
+        this.approvals = approvals;
     }
 
     @GetMapping
@@ -43,7 +50,7 @@ public class CustomerController {
 
     @PostMapping
     public CustomerView create(@RequestBody CreateCustomerRequest req,
-                               @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
+                               @Operator String op) {
         return customers.createCustomer(req, op);
     }
 
@@ -54,14 +61,14 @@ public class CustomerController {
 
     @PutMapping("/{id}")
     public CustomerView update(@PathVariable long id, @RequestBody UpdateCustomerRequest req,
-                               @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
+                               @Operator String op) {
         return customers.updateCustomer(id, req, op);
     }
 
     @PostMapping("/{id}/status")
-    public CustomerView status(@PathVariable long id, @RequestBody StatusRequest req,
-                               @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
-        return customers.changeStatus(id, req.status(), req.reason(), op);
+    public ResponseEntity<Object> status(@PathVariable long id, @RequestBody StatusRequest req, @Operator String op) {
+        return approvals.submit("CUSTOMER_STATUS", "customer", id, "Customer " + customers.getCustomer(id).customerRef()
+                + " -> " + req.status(), new ApprovalActions.StatusChange(id, req.status(), req.reason()), op).toResponse();
     }
 
     @GetMapping("/{id}/accounts")
@@ -72,7 +79,7 @@ public class CustomerController {
 
     @PostMapping("/{id}/accounts")
     public AccountView openAccount(@PathVariable long id, @RequestBody Map<String, String> body,
-                                   @RequestHeader(value = "X-Operator", defaultValue = "unknown") String op) {
+                                   @Operator String op) {
         return accounts.openAccount(new OpenAccountRequest(id, body.get("accountTypeCode"),
                 body.get("currencyCode"), body.get("accountNumber")), op);
     }

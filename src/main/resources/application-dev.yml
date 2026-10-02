@@ -8,10 +8,21 @@ cms:
     # DEV ONLY fixed keys so restarts can still decrypt stored PANs. Never use outside dev.
     pan-enc-key: ${CMS_PAN_ENC_KEY:ZGV2LW9ubHktcGFuLWVuYy1rZXktMzItYnl0ZXMtISE=}
     pan-hmac-key: ${CMS_PAN_HMAC_KEY:ZGV2LW9ubHktcGFuLWhtYWMta2V5LTMyLWJ5dGVzLSE=}
+    pan-key-check: ${CMS_PAN_KEY_CHECK:WARN}     # log only; other profiles refuse to start when no card matches
+  dexxis:
+    api-key: ${CMS_DEXXIS_API_KEY:dev-dexxis-key}
+  channel:
+    api-key: ${CMS_CHANNEL_API_KEY:dev-channel-key}
+  core-banking:                       # the in-process core banking simulator (/api/dev/core-sim)
+    base-url: ${CMS_CORE_BANKING_URL:http://localhost:${server.port:8080}/api/dev/core-sim}
+    api-key: ${CMS_CORE_BANKING_API_KEY:dev-core-key}
+    timeout-ms: ${CMS_CORE_BANKING_TIMEOUT_MS:2000}
   dev:
+    user-password: ${CMS_DEV_PASSWORD:Dev-Passw0rd!}   # admin, supervisor, supervisor2, operator, viewer
     # TEST keys from scripts/seed-dev.sql, used only by the dev corehost simulator
     acquirer-zpk-clear: 4C4C4C4C4C4C4C4C5E5E5E5E5E5E5E5E
     zmk-clear: 1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A
+    imk-ac-clear: 4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D   # IMK_AC_P01, for the simulator's chip emulation
 logging:
   level:
     com.cms: DEBUG

@@ -1,6 +1,12 @@
 package com.cms.auth;
 
 import com.cms.card.KeyRepository;
+import com.cms.core.CoreBankingClient;
+import com.cms.core.CoreBankingClient.Posting;
+import com.cms.core.CoreSafService;
+import com.cms.core.CoreSafService.SafPayload;
+import com.cms.emv.EmvService;
+import com.cms.fraud.FraudService;
 import com.cms.card.Luhn;
 import com.cms.hsm.HsmException;
 import com.cms.hsm.PayShieldClient;
@@ -21,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -54,11 +61,16 @@ public class AuthorizationService {
     private final PayShieldClient hsm;
     private final KeyRepository keys;
     private final LedgerService ledger;
+    private final EmvService emvService;
+    private final CoreBankingClient core;
+    private final CoreSafService saf;
+    private final FraudService fraud;
     private final String acquirerZpkName;
     private final PinBlockFormat pinBlockFormat;
 
     public AuthorizationService(JdbcTemplate jdbc, PlatformTransactionManager txm, PanCrypto panCrypto,
                                 PinService pins, PayShieldClient hsm, KeyRepository keys, LedgerService ledger,
+                                EmvService emvService, CoreBankingClient core, CoreSafService saf, FraudService fraud,
                                 @Value("${cms.keys.corehost-zpk-name}") String acquirerZpkName,
                                 @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -68,6 +80,10 @@ public class AuthorizationService {
         this.hsm = hsm;
         this.keys = keys;
         this.ledger = ledger;
+        this.emvService = emvService;
+        this.core = core;
+        this.saf = saf;
+        this.fraud = fraud;
         this.acquirerZpkName = acquirerZpkName;
         this.pinBlockFormat = pinBlockFormat;
     }
@@ -107,7 +123,7 @@ public class AuthorizationService {
         long txnId = insertTxn(r);
         if (r.type() == TxnType.REVERSAL) return reversal(r, txnId);
 
-        Ctx c = loadCard(r.pan());
+        Ctx c = loadCard(r.pan(), presentedExpiry(r));
         if (c == null) return finish(txnId, INVALID_CARD, "card not found", null);
         jdbc.update("UPDATE iso_transaction SET card_id = ?, account_id = ? WHERE id = ?", c.cardId, c.accountId, txnId);
 
@@ -119,12 +135,32 @@ public class AuthorizationService {
         d = checkTrackData(r, c);
         if (d != null) return finish(txnId, d, "track data / CVV mismatch", c);
 
+        EmvService.Check emv = null;
+        if (r.iccData() != null && !r.iccData().isBlank() && c.imkName != null) {
+            emv = emvService.verify(r.iccData(), r.pan(), c.psn, c.imkName, c.emvScheme, c.emvDataList);
+            jdbc.update("UPDATE iso_transaction SET emv_arqc_ok = ? WHERE id = ?", emv.ok(), txnId);
+            if (!emv.ok()) return finish(txnId, SUSPECTED_COUNTERFEIT, emv.reason(), c);
+            if (c.lastAtc != null && emv.atc() <= c.lastAtc) {
+                AuthResponse replay = finish(txnId, SUSPECTED_COUNTERFEIT, "ATC " + emv.atc() + " not above last " + c.lastAtc, c);
+                return replay.withIcc(emvService.responseTlv(emv, false));
+            }
+            jdbc.update("UPDATE card SET last_atc = ? WHERE id = ?", emv.atc(), c.cardId);
+        }
+        AuthResponse resp = decide(r, c, txnId);
+        return emv == null ? resp : resp.withIcc(emvService.responseTlv(emv, resp.approved()));
+    }
+
+    /** PIN, then the transaction itself. */
+    private AuthResponse decide(AuthRequest r, Ctx c, long txnId) {
+        String d;
         boolean pinRequired = r.channel() == Channel.ATM;
         if (pinRequired && !r.hasPin()) return finish(txnId, PIN_REQUIRED, "no PIN block", c);
         if (r.hasPin()) {
             d = verifyPin(r, c);
             if (d != null) return finish(txnId, d, d.equals(PIN_TRIES_EXCEEDED) ? "PIN tries exhausted" : "wrong PIN", c);
         }
+        AuthResponse fraudStop = screen(r, c, txnId, false);
+        if (fraudStop != null) return fraudStop;
 
         return switch (r.type()) {
             case BALANCE_INQUIRY -> balanceInquiry(r, c, txnId);
@@ -134,6 +170,26 @@ public class AuthorizationService {
             case REFUND -> refund(r, c, txnId);
             case REVERSAL -> throw new IllegalStateException("handled above");
         };
+    }
+
+    /**
+     * Fraud and risk rules (CMS-095). Refunds and reversals are not screened; a card on a fraud exemption (false
+     * positive confirmed by the fraud desk) neither. adviceOnly: score and alert, never decline.
+     */
+    private AuthResponse screen(AuthRequest r, Ctx c, long txnId, boolean adviceOnly) {
+        if (r.type() == TxnType.REFUND || r.type() == TxnType.REVERSAL) return null;
+        if (c.fraudExemptUntil != null && c.fraudExemptUntil.isAfter(OffsetDateTime.now())) return null;
+        FraudService.Verdict v = fraud.evaluate(new FraudService.Screened(txnId, c.cardId, c.productCode, c.cardCreatedAt,
+                r.type().name(), r.channel().name(), r.amount(), r.merchantType(), r.acquirerCountry()), adviceOnly);
+        if (!v.declines()) return null;
+        if (v.blocks() && "ACTIVE".equals(c.status)) {
+            jdbc.update("UPDATE card SET status = 'BLOCKED', version = version + 1 WHERE id = ?", c.cardId);
+            jdbc.update("""
+                    INSERT INTO card_status_history (card_id, old_status, new_status, reason, changed_by)
+                    VALUES (?, 'ACTIVE', 'BLOCKED', ?, ?)
+                    """, c.cardId, clip("fraud rules " + String.join(",", v.rules())), SYSTEM_ACTOR);
+        }
+        return finish(txnId, SUSPECTED_FRAUD, "fraud rules " + String.join(",", v.rules()) + " (score " + v.score() + ")", c);
     }
 
     // ---------------- checks ----------------
@@ -228,9 +284,17 @@ public class AuthorizationService {
 
     private AuthResponse balanceInquiry(AuthRequest r, Ctx c, long txnId) {
         long fee = feeFor(TxnType.BALANCE_INQUIRY, c);
+        if (isCore(c)) {
+            // the balance comes from core; no stand-in, the CMS cannot know it
+            CoreBankingClient.Result res = fee > 0
+                    ? core.debit(posting(c, "T" + txnId, 0, fee, "FEE", "Balance inquiry fee " + r.terminalId(), false))
+                    : core.balance(c.accountNumber, c.currency);
+            if (res.unavailable()) return finish(txnId, ISSUER_TIMEOUT, "core banking unavailable: " + res.reason(), c);
+            if (!res.approved()) return finish(txnId, coreDecline(res.reason()), "core banking: " + res.reason(), c);
+            return approveCore(txnId, c, fee, res, nextAuthId(), false);
+        }
         UUID journal = null;
         if (fee > 0) {
-            if (!"CMS_LEDGER".equals(c.ledgerMode)) return finish(txnId, ISSUER_INOPERATIVE, "core banking not connected", c);
             if (ledger.balance(c.accountId).available() < fee) return finish(txnId, INSUFFICIENT_FUNDS, "fee exceeds available", c);
             journal = ledger.post("FEE", c.accountId, -fee, c.currency, Gl.FEE_INCOME,
                     "Balance inquiry fee " + r.terminalId(), txnId, null, SYSTEM_ACTOR);
@@ -254,6 +318,7 @@ public class AuthorizationService {
         if (limit != null) return finish(txnId, limit, cash ? "withdrawal limit" : "purchase limit", c);
 
         long fee = feeFor(r.type(), c);
+        if (isCore(c)) return coreDebit(r, c, txnId, fee, cash);
         String funds = checkFunds(c, r.amount() + fee);
         if (funds != null) return finish(txnId, funds, funds.equals(INSUFFICIENT_FUNDS) ? "insufficient funds" : "core banking not connected", c);
 
@@ -275,23 +340,77 @@ public class AuthorizationService {
         return approve(txnId, c, fee, journal, authId);
     }
 
+    /**
+     * Core banking account: core debits (or earmarks, for a pre-authorisation) amount + fee. When core does not
+     * answer, the product's stand-in limit decides: within it the CMS approves and queues the debit for core
+     * (store-and-forward); above it, 911. Pre-authorisations in stand-in are held by the CMS only.
+     */
+    private AuthResponse coreDebit(AuthRequest r, Ctx c, long txnId, long fee, boolean cash) {
+        String authId = nextAuthId();
+        boolean preauth = r.type() == TxnType.PREAUTH;
+        String narrative = cash ? "ATM withdrawal " + r.terminalId() : purchaseNarrative(r);
+        Posting p = posting(c, "T" + txnId, r.amount(), fee, r.type().name(), narrative, false);
+        CoreBankingClient.Result res = preauth ? core.hold(p) : core.debit(p);
+        if (res.approved()) {
+            if (preauth) shadowHold(c, txnId, authId, r.amount(), res.coreRef());
+            addUsage(c.cardId, cash, 1, r.amount());
+            return approveCore(txnId, c, fee, res, authId, false);
+        }
+        if (!res.unavailable()) return finish(txnId, coreDecline(res.reason()), "core banking: " + res.reason(), c);
+        if (r.amount() + fee > c.stipLimit) {
+            return finish(txnId, ISSUER_TIMEOUT, "core banking unavailable, over stand-in limit: " + res.reason(), c);
+        }
+        if (preauth) {
+            shadowHold(c, txnId, authId, r.amount(), null);
+        } else {
+            saf.enqueue("DEBIT", txnId, c.accountId, new SafPayload(forced(p), null, null));
+        }
+        addUsage(c.cardId, cash, 1, r.amount());
+        return approveCore(txnId, c, fee, null, authId, true);
+    }
+
+    /** The CMS's copy of a hold on a core account (coreRef null = placed in stand-in, CMS only). */
+    private void shadowHold(Ctx c, long txnId, String authId, long amount, String coreRef) {
+        long holdId = ledger.placeHold(c.accountId, c.cardId, txnId, authId, amount, c.preauthDays);
+        if (coreRef != null) jdbc.update("UPDATE hold SET core_hold_ref = ? WHERE id = ?", coreRef, holdId);
+    }
+
     /** Captures the pre-authorisation hold named in the original data elements; without one, acts as a purchase. */
     private AuthResponse completion(AuthRequest r, Ctx c, long txnId, boolean force) {
-        record H(long id, long amount) {}
+        record H(long id, long amount, String coreRef) {}
         H hold = r.original() == null ? null : jdbc.query("""
-                SELECT h.id, h.amount FROM hold h JOIN iso_transaction t ON t.id = h.iso_txn_id
+                SELECT h.id, h.amount, h.core_hold_ref FROM hold h JOIN iso_transaction t ON t.id = h.iso_txn_id
                  WHERE t.mti = ? AND t.stan = ? AND (t.transmission_dt = ? OR t.local_dt = ?) AND t.acquirer_id = ?
                    AND t.card_id = ? AND h.status = 'OPEN' FOR UPDATE OF h
-                """, rs -> rs.next() ? new H(rs.getLong(1), rs.getLong(2)) : null,
+                """, rs -> rs.next() ? new H(rs.getLong(1), rs.getLong(2), rs.getString(3)) : null,
                 r.original().mti(), r.original().stan(), r.original().transmissionDt(), r.original().transmissionDt(),
                 r.original().acquirerId(), c.cardId);
 
-        if (!force) {
-            if (hold == null) {
-                String limit = checkLimits(c, false, r.amount());
-                if (limit != null) return finish(txnId, limit, "purchase limit", c);
+        if (!force && hold == null) {
+            String limit = checkLimits(c, false, r.amount());
+            if (limit != null) return finish(txnId, limit, "purchase limit", c);
+        }
+        if (isCore(c)) {
+            Posting p = posting(c, "T" + txnId, r.amount(), 0, "COMPLETION", purchaseNarrative(r), force);
+            CoreBankingClient.Result res = hold != null && hold.coreRef() != null ? core.capture(hold.coreRef(), p) : core.debit(p);
+            boolean standIn = !res.approved();
+            if (standIn) {
+                // forced completions (advices) are never declined; otherwise only within the stand-in limit
+                if (!force && !res.unavailable()) return finish(txnId, coreDecline(res.reason()), "core banking: " + res.reason(), c);
+                if (!force && r.amount() > c.stipLimit) {
+                    return finish(txnId, ISSUER_TIMEOUT, "core banking unavailable, over stand-in limit: " + res.reason(), c);
+                }
+                saf.enqueue("CAPTURE", txnId, c.accountId, new SafPayload(forced(p), hold == null ? null : hold.coreRef(), null));
             }
-            if (!"CMS_LEDGER".equals(c.ledgerMode)) return finish(txnId, ISSUER_INOPERATIVE, "core banking not connected", c);
+            if (hold != null) {
+                ledger.closeHold(hold.id(), "CAPTURED", r.amount(), "completion " + r.stan(), SYSTEM_ACTOR);
+                jdbc.update("UPDATE iso_transaction SET original_key = ? WHERE id = ?", r.original().key(), txnId);
+            } else {
+                addUsage(c.cardId, false, 1, r.amount());
+            }
+            return approveCore(txnId, c, 0, standIn ? null : res, nextAuthId(), standIn);
+        }
+        if (!force) {
             long available = ledger.balance(c.accountId).available() + (hold == null ? 0 : hold.amount());
             if (available < r.amount()) return finish(txnId, INSUFFICIENT_FUNDS, "insufficient funds", c);
         }
@@ -307,6 +426,15 @@ public class AuthorizationService {
     }
 
     private AuthResponse refund(AuthRequest r, Ctx c, long txnId) {
+        if (isCore(c)) {
+            // a credit is safe to queue: approve in stand-in whatever the amount
+            Posting p = posting(c, "T" + txnId, r.amount(), 0, "REFUND", "Refund " + purchaseNarrative(r), false);
+            CoreBankingClient.Result res = core.credit(p);
+            if (res.approved()) return approveCore(txnId, c, 0, res, nextAuthId(), false);
+            if (!res.unavailable() && !r.advice()) return finish(txnId, coreDecline(res.reason()), "core banking: " + res.reason(), c);
+            saf.enqueue("CREDIT", txnId, c.accountId, new SafPayload(forced(p), null, null));
+            return approveCore(txnId, c, 0, null, nextAuthId(), true);
+        }
         UUID journal = ledger.post("REFUND", c.accountId, r.amount(), c.currency, Gl.POS_SETTLEMENT,
                 "Refund " + purchaseNarrative(r), txnId, null, SYSTEM_ACTOR);
         return approve(txnId, c, 0, journal, nextAuthId());
@@ -317,11 +445,13 @@ public class AuthorizationService {
      * without status, PIN, limit or funds checks. The balance may go negative.
      */
     private AuthResponse advice(AuthRequest r, Ctx c, long txnId) {
+        screen(r, c, txnId, true);
         if (hasAmount(r.type()) && !c.currencyNumeric.equals(r.currencyNumeric())) {
             // no FX in the CMS: acknowledge so the switch stops repeating, book nothing, flag for operations
             return finish(txnId, APPROVED, "NOT POSTED: advice currency " + r.currencyNumeric()
                     + " differs from account " + c.currency + ", manual review", c);
         }
+        if (isCore(c)) return coreAdvice(r, c, txnId);
         UUID journal = null;
         switch (r.type()) {
             case WITHDRAWAL -> journal = ledger.post("WITHDRAWAL", c.accountId, -r.amount(), c.currency, Gl.ATM_CASH,
@@ -339,6 +469,30 @@ public class AuthorizationService {
         return approve(txnId, c, 0, journal, nextAuthId());
     }
 
+    /** Advice on a core account: forced posting to core, queued when core is down or refuses. */
+    private AuthResponse coreAdvice(AuthRequest r, Ctx c, long txnId) {
+        String narrative = r.type() == TxnType.WITHDRAWAL ? "ATM withdrawal (advice) " + r.terminalId() : purchaseNarrative(r) + " (advice)";
+        switch (r.type()) {
+            case WITHDRAWAL, PURCHASE -> {
+                Posting p = forced(posting(c, "T" + txnId, r.amount(), 0, r.type().name(), narrative, true));
+                CoreBankingClient.Result res = core.debit(p);
+                addUsage(c.cardId, r.type() == TxnType.WITHDRAWAL, 1, r.amount());
+                if (res.approved()) return approveCore(txnId, c, 0, res, nextAuthId(), false);
+                saf.enqueue("DEBIT", txnId, c.accountId, new SafPayload(p, null, null));
+                return approveCore(txnId, c, 0, null, nextAuthId(), true);
+            }
+            case PREAUTH -> {
+                CoreBankingClient.Result res = core.hold(forced(posting(c, "T" + txnId, r.amount(), 0, "PREAUTH", narrative, true)));
+                shadowHold(c, txnId, null, r.amount(), res.approved() ? res.coreRef() : null);
+                addUsage(c.cardId, false, 1, r.amount());
+                return approveCore(txnId, c, 0, res.approved() ? res : null, nextAuthId(), !res.approved());
+            }
+            case COMPLETION -> { return completion(r, c, txnId, true); }
+            case REFUND -> { return refund(r, c, txnId); }
+            default -> { return approveCore(txnId, c, 0, null, nextAuthId(), false); }
+        }
+    }
+
     // ---------------- reversal ----------------
 
     /**
@@ -347,15 +501,15 @@ public class AuthorizationService {
      * recorded but change nothing. Partial reversal: amountCompleted is what was actually dispensed.
      */
     private AuthResponse reversal(AuthRequest r, long txnId) {
-        record O(long id, String type, String action, boolean reversed, long amount, Long cardId, Long accountId) {}
+        record O(long id, String type, String action, boolean reversed, long amount, Long cardId, Long accountId, long fee) {}
         O o = r.original() == null ? null : jdbc.query("""
-                SELECT id, txn_type, action_code, reversed, COALESCE(amount, 0), card_id, account_id
+                SELECT id, txn_type, action_code, reversed, COALESCE(amount, 0), card_id, account_id, COALESCE(fee_amount, 0)
                   FROM iso_transaction
                  WHERE mti = ? AND stan = ? AND (transmission_dt = ? OR local_dt = ?) AND acquirer_id = ?
                    AND txn_type <> 'REVERSAL'
                  ORDER BY id DESC LIMIT 1 FOR UPDATE
                 """, rs -> rs.next() ? new O(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getBoolean(4),
-                        rs.getLong(5), (Long) rs.getObject(6), (Long) rs.getObject(7)) : null,
+                        rs.getLong(5), (Long) rs.getObject(6), (Long) rs.getObject(7), rs.getLong(8)) : null,
                 r.original().mti(), r.original().stan(), r.original().transmissionDt(), r.original().transmissionDt(),
                 r.original().acquirerId());
 
@@ -365,6 +519,7 @@ public class AuthorizationService {
         Ctx c = o.cardId() == null ? null : loadCardById(o.cardId());
         if (o.reversed()) return finish(txnId, REVERSAL_ACCEPTED, "already reversed", c);
         if (!ActionCode.APPROVED.equals(o.action())) return finish(txnId, REVERSAL_ACCEPTED, "original not approved", c);
+        boolean coreAcct = c != null && isCore(c);
 
         long completed = r.amountCompleted() == null ? 0 : Math.max(0, r.amountCompleted());
         long toReverse = o.amount() - completed;
@@ -374,23 +529,40 @@ public class AuthorizationService {
         switch (o.type()) {
             case "WITHDRAWAL", "PURCHASE", "COMPLETION", "REFUND" -> {
                 if (toReverse <= 0) return finish(txnId, REVERSAL_ACCEPTED, "nothing to reverse", c);
-                UUID principal = journalOf(o.id(), o.type());
-                if (principal != null) ledger.reverse(principal, toReverse, "Reversal " + r.stan(), txnId, SYSTEM_ACTOR);
+                if (coreAcct) {
+                    coreReverse(c, txnId, o.id(), toReverse, full, r.stan());
+                } else {
+                    UUID principal = journalOf(o.id(), o.type());
+                    if (principal != null) ledger.reverse(principal, toReverse, "Reversal " + r.stan(), txnId, SYSTEM_ACTOR);
+                }
                 if (!o.type().equals("REFUND")) addUsage(o.cardId(), o.type().equals("WITHDRAWAL"), full ? -1 : 0, -toReverse);
             }
             case "PREAUTH" -> {
-                Long hold = jdbc.query("SELECT id FROM hold WHERE iso_txn_id = ? AND status = 'OPEN'",
-                        rs -> rs.next() ? rs.getLong(1) : null, o.id());
+                record Hd(long id, String coreRef) {}
+                Hd hold = jdbc.query("SELECT id, core_hold_ref FROM hold WHERE iso_txn_id = ? AND status = 'OPEN'",
+                        rs -> rs.next() ? new Hd(rs.getLong(1), rs.getString(2)) : null, o.id());
                 if (hold != null) {
-                    ledger.closeHold(hold, "RELEASED", 0, "reversal " + r.stan(), SYSTEM_ACTOR);
-                    if (!full) ledger.placeHold(o.accountId(), o.cardId(), o.id(), null, completed, c == null ? 7 : c.preauthDays);
+                    ledger.closeHold(hold.id(), "RELEASED", 0, "reversal " + r.stan(), SYSTEM_ACTOR);
+                    if (coreAcct && hold.coreRef() != null) coreRelease(c, txnId, hold.coreRef());
+                    if (!full) {
+                        if (coreAcct) {
+                            CoreBankingClient.Result res = core.hold(forced(posting(c, "R" + txnId + "H", completed, 0, "PREAUTH",
+                                    "Remaining hold after partial reversal " + r.stan(), true)));
+                            shadowHold(c, o.id(), null, completed, res.approved() ? res.coreRef() : null);
+                        } else {
+                            ledger.placeHold(o.accountId(), o.cardId(), o.id(), null, completed, c == null ? 7 : c.preauthDays);
+                        }
+                    }
                     addUsage(o.cardId(), false, full ? -1 : 0, -toReverse);
                 }
             }
             case "PIN_CHANGE" -> {
                 return finish(txnId, REVERSAL_ACCEPTED, "PIN change is not reversible", c);
             }
-            default -> { /* balance inquiry: only the fee */ }
+            default -> {
+                // balance inquiry: only the fee
+                if (coreAcct && full && o.fee() > 0) coreReverse(c, txnId, o.id(), 0, true, r.stan());
+            }
         }
         if (full) {
             UUID fee = journalOf(o.id(), "FEE");
@@ -425,8 +597,6 @@ public class AuthorizationService {
     }
 
     private String checkFunds(Ctx c, long needed) {
-        // CORE_BANKING accounts need the core banking funds interface, which is not built yet.
-        if (!"CMS_LEDGER".equals(c.ledgerMode)) return ISSUER_INOPERATIVE;
         Balance b = ledger.balance(c.accountId);
         return b.available() < needed ? INSUFFICIENT_FUNDS : null;
     }
@@ -462,12 +632,12 @@ public class AuthorizationService {
         return jdbc.queryForObject("""
                 INSERT INTO iso_transaction (mti, processing_code, stan, rrn, transmission_dt, local_dt, acquirer_id,
                     terminal_id, pan_last4, txn_type, amount, currency_code, channel, is_advice, merchant_type,
-                    card_acceptor, original_key, raw_request_masked)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                    card_acceptor, original_key, raw_request_masked, acquirer_country)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """, Long.class, r.mti(), r.processingCode(), r.stan(), r.rrn(), r.transmissionDt(), r.localDt(),
                 r.acquirerId(), r.terminalId(), last4, r.type().name(), r.amount(), currency, r.channel().name(),
                 r.advice(), r.merchantType(), r.cardAcceptor(), r.original() == null ? null : r.original().key(),
-                r.toString());
+                r.toString(), r.acquirerCountry() != null && r.acquirerCountry().matches("\\d{3}") ? r.acquirerCountry() : null);
     }
 
     private AuthResponse approve(long txnId, Ctx c, long fee, UUID journal) {
@@ -479,6 +649,7 @@ public class AuthorizationService {
     }
 
     private AuthResponse approve(long txnId, Ctx c, long fee, UUID journal, String authId, String code, String note) {
+        if (isCore(c)) return approveCore(txnId, c, fee, null, authId, false, code, note);
         Balance b = ledger.balance(c.accountId);
         jdbc.update("""
                 UPDATE iso_transaction SET action_code = ?, auth_id = ?, decline_reason = ?, fee_amount = ?,
@@ -487,6 +658,62 @@ public class AuthorizationService {
                 """, code, authId, clip(note), fee, b.ledger(), b.available(), journal, txnId);
         jdbc.update("UPDATE card SET last_txn_at = now() WHERE id = ?", c.cardId);
         return new AuthResponse(code, authId, b.currency(), b.ledger(), b.available(), txnId, note);
+    }
+
+    /** Approval on a core banking account: balances are what core answered (none in stand-in), nothing posted locally. */
+    private AuthResponse approveCore(long txnId, Ctx c, long fee, CoreBankingClient.Result res, String authId, boolean standIn) {
+        return approveCore(txnId, c, fee, res, authId, standIn, APPROVED, standIn ? "stand-in: core banking unavailable" : null);
+    }
+
+    private AuthResponse approveCore(long txnId, Ctx c, long fee, CoreBankingClient.Result res, String authId, boolean standIn,
+                                     String code, String note) {
+        Long ledgerBalance = res == null ? null : res.ledgerBalance();
+        Long available = res == null ? null : res.availableBalance();
+        jdbc.update("""
+                UPDATE iso_transaction SET action_code = ?, auth_id = ?, decline_reason = ?, fee_amount = ?,
+                       ledger_after = ?, available_after = ?, core_ref = ?, stand_in = ?, responded_at = now()
+                 WHERE id = ?
+                """, code, authId, clip(note), fee, ledgerBalance, available, res == null ? null : res.coreRef(), standIn, txnId);
+        jdbc.update("UPDATE card SET last_txn_at = now() WHERE id = ?", c.cardId);
+        return new AuthResponse(code, authId, c.currency, ledgerBalance, available, txnId, note);
+    }
+
+    private void coreReverse(Ctx c, long txnId, long originalTxnId, long amount, boolean includeFee, String stan) {
+        Posting p = new Posting("R" + txnId, c.accountNumber, amount, 0, c.currency, "REVERSAL", "Reversal " + stan, true, includeFee);
+        CoreBankingClient.Result res = core.reverse("T" + originalTxnId, p);
+        if (!res.approved()) saf.enqueue("REVERSAL", txnId, c.accountId, new SafPayload(p, null, "T" + originalTxnId));
+    }
+
+    private void coreRelease(Ctx c, long txnId, String holdRef) {
+        CoreBankingClient.Result res = core.release(holdRef, "R" + txnId);
+        if (!res.approved()) {
+            saf.enqueue("RELEASE", txnId, c.accountId,
+                    new SafPayload(posting(c, "R" + txnId, 0, 0, "RELEASE", "Hold release", true), holdRef, null));
+        }
+    }
+
+    private Posting posting(Ctx c, String reference, long amount, long fee, String type, String narrative, boolean force) {
+        return new Posting(reference, c.accountNumber, amount, fee, c.currency, type, narrative, force, false);
+    }
+
+    private static Posting forced(Posting p) {
+        return new Posting(p.reference(), p.accountRef(), p.amount(), p.fee(), p.currency(), p.type(), p.narrative(), true, p.includeFee());
+    }
+
+    private static boolean isCore(Ctx c) {
+        return "CORE_BANKING".equals(c.ledgerMode);
+    }
+
+    /** Core banking decline reason -> action code. */
+    static String coreDecline(String reason) {
+        if (reason == null) return DO_NOT_HONOUR;
+        return switch (reason) {
+            case "INSUFFICIENT_FUNDS" -> INSUFFICIENT_FUNDS;
+            case "ACCOUNT_NOT_FOUND", "ACCOUNT_CLOSED" -> NO_ACCOUNT;
+            case "ACCOUNT_BLOCKED", "DEBIT_BLOCKED" -> NOT_PERMITTED_CARDHOLDER;
+            case "LIMIT_EXCEEDED" -> EXCEEDS_AMOUNT_LIMIT;
+            default -> DO_NOT_HONOUR;
+        };
     }
 
     private AuthResponse finish(long txnId, String code, String reason, Ctx c) {
@@ -583,6 +810,12 @@ public class AuthorizationService {
         int pinTries, pinTryLimit, dailyWdCount, dailyPosCount, preauthDays;
         long dailyWdAmount, perTxnWd, dailyPosAmount, perTxnPos, wdFee, biFee;
         boolean productAtm, productPos, productEcom, cardAtm, cardPos, cardEcom, verifyCvv;
+        String psn, imkName, emvScheme, emvDataList;
+        Integer lastAtc;
+        String accountNumber;
+        long stipLimit;
+        String productCode;
+        OffsetDateTime cardCreatedAt, fraudExemptUntil;
     }
 
     private static final String CTX_SELECT = """
@@ -594,7 +827,9 @@ public class AuthorizationService {
                    COALESCE(k.daily_wd_amount_limit, p.daily_wd_amount), COALESCE(k.per_txn_wd_limit, p.per_txn_wd_max),
                    COALESCE(k.daily_pos_amount_limit, p.daily_pos_amount, p.daily_wd_amount), COALESCE(k.per_txn_pos_limit, p.per_txn_pos_max, p.per_txn_wd_max),
                    p.wd_fee, p.bi_fee, p.atm_enabled, p.pos_enabled, p.ecom_enabled,
-                   k.atm_enabled, k.pos_enabled, k.ecom_enabled, p.verify_cvv
+                   k.atm_enabled, k.pos_enabled, k.ecom_enabled, p.verify_cvv,
+                   k.psn, p.imk_ac_key_name, p.emv_scheme, p.emv_data_list, k.last_atc,
+                   a.account_number, p.core_stip_limit, p.code, k.created_at, k.fraud_exempt_until
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN account a      ON a.id = k.account_id
@@ -603,9 +838,26 @@ public class AuthorizationService {
               LEFT JOIN account_type t ON t.code = a.account_type_code
             """;
 
-    private Ctx loadCard(String pan) {
-        return jdbc.query(CTX_SELECT + " WHERE k.pan_hash = ? FOR UPDATE OF k, a",
-                rs -> rs.next() ? mapCtx(rs) : null, (Object) panCrypto.hash(pan));
+    /**
+     * Several cards may share a PAN after a same-PAN renewal: take the one whose expiry matches what the
+     * terminal read, otherwise the active one, otherwise the newest.
+     */
+    private Ctx loadCard(String pan, String expiry) {
+        return jdbc.query(CTX_SELECT + """
+                 WHERE k.pan_hash = ?
+                 ORDER BY COALESCE(k.expiry_yymm = ?, FALSE) DESC,
+                          CASE k.status WHEN 'ACTIVE' THEN 0 WHEN 'PIN_BLOCKED' THEN 1 WHEN 'BLOCKED' THEN 2
+                                        WHEN 'PENDING_PRINT' THEN 4 WHEN 'PRINTED' THEN 4 ELSE 3 END,
+                          k.id DESC
+                 LIMIT 1 FOR UPDATE OF k, a
+                """, rs -> rs.next() ? mapCtx(rs) : null, panCrypto.hash(pan), expiry);
+    }
+
+    private static String presentedExpiry(AuthRequest r) {
+        if (r.expiryYYMM() != null && !r.expiryYYMM().isBlank()) return r.expiryYYMM();
+        if (r.track2() == null || r.track2().isBlank()) return null;
+        Track2 t = Track2.parse(r.track2());
+        return t == null ? null : t.expiry();
     }
 
     private Ctx loadCardById(long cardId) {
@@ -646,6 +898,16 @@ public class AuthorizationService {
         c.cardPos = rs.getBoolean(30);
         c.cardEcom = rs.getBoolean(31);
         c.verifyCvv = rs.getBoolean(32);
+        c.psn = rs.getString(33);
+        c.imkName = rs.getString(34);
+        c.emvScheme = rs.getString(35);
+        c.emvDataList = rs.getString(36);
+        c.lastAtc = (Integer) rs.getObject(37);
+        c.accountNumber = rs.getString(38);
+        c.stipLimit = rs.getLong(39);
+        c.productCode = rs.getString(40);
+        c.cardCreatedAt = rs.getObject(41, OffsetDateTime.class);
+        c.fraudExemptUntil = rs.getObject(42, OffsetDateTime.class);
         return c;
     }
 
