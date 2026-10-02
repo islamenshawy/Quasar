@@ -61,6 +61,7 @@
         <q-tabs v-model="tab" align="left" no-caps active-color="primary" indicator-color="primary" dense class="q-px-sm">
           <q-tab name="transactions" label="Transactions" />
           <q-tab name="fees" :label="`Fees${fees.items?.length ? ' (' + fees.items.length + ')' : ''}`" @click="loadFees" />
+          <q-tab name="chip" label="Chip" @click="loadScripts" />
           <q-tab name="history" label="Status history" />
           <q-tab name="activity" label="Activity" />
         </q-tabs>
@@ -77,6 +78,38 @@
                   <q-td class="text-right mono text-weight-medium">{{ money(fees.total, 2) }}</q-td><q-td colspan="2" /></q-tr>
               </template>
             </q-table>
+          </q-tab-panel>
+          <q-tab-panel name="chip">
+            <div class="row items-center q-mb-sm">
+              <div class="col">
+                <div class="text-subtitle1 text-weight-medium">Commands for the chip</div>
+                <div class="text-caption muted">Sent with the card's next online chip transaction, signed by the HSM; the card reports the result on a later one.</div>
+              </div>
+              <q-btn v-if="can.write" unelevated no-caps color="primary" icon="memory" label="Send a command" @click="scriptDialog = true" />
+            </div>
+            <q-table flat :rows="chipScripts" :columns="scriptColumns" row-key="id" hide-pagination :pagination="{ rowsPerPage: 0 }"
+                     no-data-label="No chip commands for this card">
+              <template #body-cell-status="p">
+                <q-td :props="p">
+                  <q-badge :color="{ QUEUED: 'info', SENT: 'warning', APPLIED: 'positive', FAILED: 'negative', CANCELLED: 'grey-6' }[p.value]" :label="label(p.value)" />
+                  <q-btn v-if="p.value === 'QUEUED' && can.write" flat dense no-caps size="sm" color="negative" label="Cancel" @click="cancelScript(p.row)" />
+                </q-td>
+              </template>
+            </q-table>
+            <q-dialog v-model="scriptDialog">
+              <q-card style="width: 460px; max-width: 95vw">
+                <q-card-section class="text-h6">Send a command to the chip</q-card-section>
+                <q-card-section class="q-pt-none q-gutter-md">
+                  <q-select v-model="script.command" outlined dense emit-value map-options label="Command" :options="scriptOptions" />
+                  <q-input v-if="script.command === 'UPDATE_OFFLINE_LIMIT'" v-model="script.value" outlined dense type="number" label="Offline transactions allowed (0-255)" />
+                  <q-input v-model="script.reason" outlined dense label="Reason *" />
+                </q-card-section>
+                <q-card-actions align="right">
+                  <q-btn flat no-caps label="Cancel" v-close-popup />
+                  <q-btn unelevated no-caps color="primary" label="Queue" :disable="!script.reason" @click="queueScript" />
+                </q-card-actions>
+              </q-card>
+            </q-dialog>
           </q-tab-panel>
           <q-tab-panel name="history">
             <q-timeline color="primary" layout="dense">
@@ -128,6 +161,36 @@ import { api, pending } from '../lib/api.js'
 import { can } from '../lib/session.js'
 import { dateTime, expiry, label, money, statusColor } from '../lib/format.js'
 
+const chipScripts = ref([])
+const scriptDialog = ref(false)
+const script = ref({ command: 'PIN_UNBLOCK', value: '', reason: '' })
+const scriptOptions = [
+  { label: 'Unblock the offline PIN', value: 'PIN_UNBLOCK' }, { label: 'Block the chip application', value: 'APPLICATION_BLOCK' },
+  { label: 'Unblock the chip application', value: 'APPLICATION_UNBLOCK' }, { label: 'Set the offline transaction limit', value: 'UPDATE_OFFLINE_LIMIT' }]
+const scriptColumns = [
+  { name: 'createdAt', label: 'Queued', field: 'createdAt', format: v => new Date(v).toLocaleString(), align: 'left' },
+  { name: 'command', label: 'Command', field: r => (scriptOptions.find(o => o.value === r.command)?.label || r.command) + (r.value ? ' = ' + r.value : ''), align: 'left' },
+  { name: 'reason', label: 'Reason', field: 'reason', align: 'left' },
+  { name: 'sentAt', label: 'Sent', field: r => r.sentAt ? new Date(r.sentAt).toLocaleString() : '—', align: 'left' },
+  { name: 'createdBy', label: 'By', field: 'createdBy', align: 'left' },
+  { name: 'status', label: 'Status', field: 'status', align: 'left' }
+]
+async function loadScripts () {
+  chipScripts.value = await api.get(`/admin/cards/${props.id}/chip-scripts`)
+}
+async function queueScript () {
+  try {
+    const r = await api.post(`/admin/cards/${props.id}/chip-scripts`, script.value)
+    if (!pending(r)) Notify.create({ type: 'positive', message: 'Command queued for the next chip transaction' })
+    scriptDialog.value = false
+    script.value = { command: 'PIN_UNBLOCK', value: '', reason: '' }
+    loadScripts()
+  } catch { /* shown */ }
+}
+async function cancelScript (s) {
+  await api.post(`/admin/cards/chip-scripts/${s.id}/cancel`, {})
+  loadScripts()
+}
 const fees = ref({})
 const feeColumns = [
   { name: 'createdAt', label: 'Charged', field: 'createdAt', format: v => new Date(v).toLocaleString(), align: 'left' },

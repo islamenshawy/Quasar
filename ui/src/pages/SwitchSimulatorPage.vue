@@ -72,6 +72,9 @@
                 </div>
               </div>
               <q-toggle v-model="f.chip" label="Chip (EMV): send field 55 with an ARQC" :disable="f.channel === 'ECOM'" />
+              <q-toggle v-if="f.channel === 'POS'" v-model="f.contactless" label="Contactless tap (field 22 = M)" />
+              <q-toggle v-if="f.chip" v-model="f.failScripts" label="Chip refuses issuer scripts (reports failure)" color="warning" />
+              <q-input v-if="f.channel === 'ECOM'" v-model="f.cvv2" outlined dense maxlength="4" label="CVV2 (field 48)" class="mono" />
               <q-select v-if="f.chip" v-model="f.tvr" :options="tvrOptions" emit-value map-options outlined dense
                         label="Terminal verification results (TVR, tag 95)">
                 <template #append><span class="mono text-caption">{{ f.tvr }}</span></template>
@@ -103,6 +106,15 @@
             <q-badge v-if="!last.chip.arpcReceived" color="grey-6" label="no ARPC returned" />
             <q-badge v-else :color="last.chip.arpcValid ? 'positive' : 'negative'"
                      :label="last.chip.arpcValid ? `ARPC valid · ARC ${last.chip.arc}` : 'ARPC invalid'" />
+          </q-card-section>
+          <q-card-section v-if="last.chip?.scripts?.length" class="q-pt-none">
+            <div class="text-caption muted q-mb-xs">Issuer scripts run by the card</div>
+            <div v-for="s in last.chip.scripts" :key="s.scriptId" class="row items-center q-gutter-sm text-body2">
+              <q-icon :name="s.macValid ? 'verified' : 'gpp_bad'" :color="s.macValid ? 'positive' : 'negative'" />
+              <span class="mono">{{ s.apdu }}</span>
+              <q-badge :color="s.result === 'SUCCESSFUL' ? 'positive' : 'negative'" :label="s.result" />
+              <span class="text-caption muted">reported in 9F5B on the next chip transaction</span>
+            </div>
           </q-card-section>
           <q-card-section v-if="last.chip?.requestIcc" class="q-pt-none">
             <q-tabs v-model="iccTab" dense align="left" no-caps active-color="primary" indicator-color="primary" class="q-mb-sm">
@@ -177,7 +189,7 @@ import { label, toMinor, money as fmt } from '../lib/format.js'
 const $q = useQuasar()
 
 const typeOptions = ['BALANCE_INQUIRY', 'WITHDRAWAL', 'PURCHASE', 'PREAUTH', 'REFUND', 'PIN_CHANGE'].map(t => ({ label: label(t), value: t }))
-const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000', mcc: '', country: '' })
+const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000', mcc: '', country: '', contactless: false, failScripts: false, cvv2: '' })
 const tvrOptions = TVR_PRESETS
 const iccTab = ref('request')
 const pasted = ref('')
@@ -238,7 +250,9 @@ async function send () {
     pin: f.pin || null, newPin: f.type === 'PIN_CHANGE' ? f.newPin : null,
     terminalId: f.terminalId || null, merchant: f.merchant || null, advice: f.advice,
     chip: f.chip && f.channel !== 'ECOM', tamperArqc: f.chip && f.tamper, tvr: f.chip ? f.tvr : null,
-    mcc: /^[0-9]{4}$/.test(f.mcc) ? f.mcc : null, country: /^[0-9]{3}$/.test(f.country) ? f.country : null
+    mcc: /^[0-9]{4}$/.test(f.mcc) ? f.mcc : null, country: /^[0-9]{3}$/.test(f.country) ? f.country : null,
+    contactless: f.channel === 'POS' && f.contactless, failScripts: f.chip && f.failScripts,
+    cvv2: f.channel === 'ECOM' && f.cvv2 ? f.cvv2 : null
   }
   const amt = needsAmount.value ? ` ${f.amount}` : ''
   await post(body, `${label(f.type)}${amt} · ${f.channel} · ${f.card.maskedPan}`, f.type)

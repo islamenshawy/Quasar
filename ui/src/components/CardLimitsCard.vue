@@ -34,6 +34,7 @@
               <q-toggle v-model="f.atmEnabled" label="ATM" :disable="!l.product.atmEnabled" />
               <q-toggle v-model="f.posEnabled" label="POS" :disable="!l.product.posEnabled" />
               <q-toggle v-model="f.ecomEnabled" label="E-commerce" :disable="!l.product.ecomEnabled" />
+              <q-toggle v-model="f.contactlessEnabled" label="Contactless" :disable="!l.product.contactlessEnabled" />
             </div>
             <div class="row q-col-gutter-sm">
               <div v-for="x in fields" :key="x.key" class="col-12 col-sm-4">
@@ -72,7 +73,8 @@ const eff = (card, product) => card ?? product
 const channels = computed(() => [
   { key: 'atm', label: 'ATM', on: l.value.atmEnabled && l.value.product.atmEnabled, productOff: !l.value.product.atmEnabled },
   { key: 'pos', label: 'POS', on: l.value.posEnabled && l.value.product.posEnabled, productOff: !l.value.product.posEnabled },
-  { key: 'ecom', label: 'E-commerce', on: l.value.ecomEnabled && l.value.product.ecomEnabled, productOff: !l.value.product.ecomEnabled }
+  { key: 'ecom', label: 'E-commerce', on: l.value.ecomEnabled && l.value.product.ecomEnabled, productOff: !l.value.product.ecomEnabled },
+  { key: 'ctls', label: 'Contactless', on: l.value.contactlessEnabled && l.value.product.contactlessEnabled, productOff: !l.value.product.contactlessEnabled }
 ])
 
 const rows = computed(() => {
@@ -106,7 +108,7 @@ async function load () {
 function openEdit () {
   const x = l.value, e = x.exponent
   Object.assign(f, {
-    atmEnabled: x.atmEnabled, posEnabled: x.posEnabled, ecomEnabled: x.ecomEnabled,
+    atmEnabled: x.atmEnabled, posEnabled: x.posEnabled, ecomEnabled: x.ecomEnabled, contactlessEnabled: x.contactlessEnabled,
     dailyWdCountLimit: x.dailyWdCountLimit, dailyWdAmountLimit: toMajor(x.dailyWdAmountLimit, e), perTxnWdLimit: toMajor(x.perTxnWdLimit, e),
     dailyPosCountLimit: x.dailyPosCountLimit, dailyPosAmountLimit: toMajor(x.dailyPosAmountLimit, e), perTxnPosLimit: toMajor(x.perTxnPosLimit, e),
     reason: ''
@@ -121,7 +123,7 @@ async function save () {
   const e = l.value.exponent
   try {
     const res = await api.put(`/admin/cards/${props.cardId}/limits`, {
-      atmEnabled: f.atmEnabled, posEnabled: f.posEnabled, ecomEnabled: f.ecomEnabled,
+      atmEnabled: f.atmEnabled, posEnabled: f.posEnabled, ecomEnabled: f.ecomEnabled, contactlessEnabled: f.contactlessEnabled,
       dailyWdCountLimit: num(f.dailyWdCountLimit), dailyWdAmountLimit: toMinor(num(f.dailyWdAmountLimit), e),
       perTxnWdLimit: toMinor(num(f.perTxnWdLimit), e), dailyPosCountLimit: num(f.dailyPosCountLimit),
       dailyPosAmountLimit: toMinor(num(f.dailyPosAmountLimit), e), perTxnPosLimit: toMinor(num(f.perTxnPosLimit), e),

@@ -227,14 +227,15 @@ const TAGS = {
   '9F40': { name: 'Additional Terminal Capabilities', desc: 'Transaction types, input and output capabilities of the terminal.' },
   '9F41': { name: 'Transaction Sequence Counter', desc: 'Counter kept by the terminal, incremented per transaction.', decode: v => ({ summary: bcd(v).replace(/^0+(?=\d)/, '') }) },
   '9F53': { name: 'Transaction Category Code', desc: 'Mastercard: kind of transaction (e.g. R retail, C cash).', decode: v => ({ summary: ascii(v) }) },
-  '9F5B': { name: 'Issuer Script Results', desc: 'Result of each issuer script command run by the card.' },
   '9F66': { name: 'Terminal Transaction Qualifiers (TTQ)', desc: 'Contactless: the reader\'s capabilities and requirements for this transaction.' },
   '9F6C': { name: 'Card Transaction Qualifiers (CTQ)', desc: 'Contactless: card preferences for CVM and offline processing.' },
   '9F6E': { name: 'Form Factor Indicator / Third Party Data', desc: 'Device form factor (card, phone, wearable) or scheme specific data.' },
   '9F7C': { name: 'Customer Exclusive Data', desc: 'Issuer proprietary data from the card.' },
   71: { name: 'Issuer Script Template 1', desc: 'Commands for the card, run before the final GENERATE AC.' },
   72: { name: 'Issuer Script Template 2', desc: 'Commands for the card, run after the final GENERATE AC (e.g. PIN unblock, limits update).' },
-  86: { name: 'Issuer Script Command', desc: 'One APDU command inside a script template.' }
+  86: { name: 'Issuer Script Command', desc: 'One APDU command inside a script template.' },
+  '9F18': { name: 'Issuer Script Identifier', desc: 'Identifies the script; the card echoes it in 9F5B with the result.', decode: v => ({ summary: hx(v) }) },
+  '9F5B': { name: 'Issuer Script Results', desc: 'One entry per script run on the previous answer: result (0 not performed, 1 failed, 2 successful), sequence and script id.', decode: v => { const out = []; for (let i = 0; i + 5 <= v.length; i += 5) out.push({ label: 'Script ' + hx(v.slice(i + 1, i + 5)), value: ({ 0: 'not performed', 1: 'failed', 2: 'successful' }[v[i] >> 4] || 'RFU') + ' (command ' + (v[i] & 15) + ')' }); return { summary: out.map(o => o.value.split(' ')[0]).join(', ') || 'none', details: out, warn: out.some(o => o.value.startsWith('failed')) } } }
 }
 
 function listSet (bits, max = 6) {

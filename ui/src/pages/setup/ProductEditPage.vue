@@ -118,7 +118,8 @@ const form = reactive({
   atmEnabled: true, posEnabled: true, ecomEnabled: false, dailyPosCount: 20, dailyPosAmount: null, perTxnPosMax: null,
   wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7, coreStipLimit: 0, feePlanCode: '', fxAllowed: false,
   autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30,
-  emvScheme: 'EMV_CSK', emvDataList: '9F02,9F03,9F1A,95,5F2A,9A,9C,9F37,82,9F36,9F10:CVR'
+  emvScheme: 'EMV_CSK', emvDataList: '9F02,9F03,9F1A,95,5F2A,9A,9C,9F37,82,9F36,9F10:CVR',
+  imkSmiKeyName: null, contactlessEnabled: true, contactlessTxnLimit: null, contactlessCvmLimit: null, contactlessCumulativeLimit: null, verifyCvv2: false
 })
 const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee', 'coreStipLimit']
 
@@ -220,10 +221,23 @@ const sections = computed(() => [
     note: 'ARQC is verified by the HSM (KQ) when the product has an IMK-AC key (PIN and keys). The data list must match the card\'s CDOL1.',
     fields: [
       { name: 'emvScheme', label: 'Cryptogram version', type: 'select', required: true,
-        options: [{ label: 'EMV common session key (M/Chip, Visa CVN18)', value: 'EMV_CSK' }, { label: 'Visa CVN10 (card key)', value: 'VISA_CVN10' }] },
+        options: [{ label: 'EMV common session key (M/Chip, Visa CVN18)', value: 'EMV_CSK' }, { label: 'Visa CVN10 (card key)', value: 'VISA_CVN10' },
+          { label: 'Visa CVN17 (qVSDC contactless)', value: 'VISA_CVN17' }] },
       { name: 'emvDataList', label: 'Data list (tags in CDOL1 order)', required: true, col: 'col-12', mono: true,
-        hint: '9F10:CVR = bytes 4-7 of the issuer application data',
-        rules: [v => /^([0-9A-Fa-f]{2,6}(:CVR)?)(\s*,\s*[0-9A-Fa-f]{2,6}(:CVR)?)*$/.test(v || '') || 'Comma-separated tags'] }
+        hint: '9F10:CVR = bytes 4-7 of the issuer application data; 9F10:B5 = byte 5 (CVN17: 9F02,9F37,9F36,9F10:B5)',
+        rules: [v => /^([0-9A-Fa-f]{2,6}(:CVR|:B[0-9]{1,2})?)(\s*,\s*[0-9A-Fa-f]{2,6}(:CVR|:B[0-9]{1,2})?)*$/.test(v || '') || 'Comma-separated tags'] },
+      { name: 'imkSmiKeyName', label: 'IMK-SMI (issuer scripts)', type: 'select', options: [{ label: 'None: no chip commands', value: null }, ...keyOptions('IMK_SMI')] }
+    ]
+  },
+  {
+    title: 'Contactless and card verification',
+    note: `Contactless taps: the no-PIN limit and the cumulative no-PIN spend decide when a PIN is asked (112). Amounts in ${form.currencyCode}, blank = no limit.`,
+    fields: [
+      { name: 'contactlessEnabled', label: 'Contactless allowed', type: 'toggle', col: 'col-12' },
+      { name: 'contactlessTxnLimit', label: 'Per tap max', type: 'number', step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4' },
+      { name: 'contactlessCvmLimit', label: 'No-PIN up to', type: 'number', step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4' },
+      { name: 'contactlessCumulativeLimit', label: 'No-PIN total before a PIN', type: 'number', step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-4' },
+      { name: 'verifyCvv2', label: 'Online purchases must carry a valid CVV2', type: 'toggle', col: 'col-12' }
     ]
   },
   {
@@ -259,12 +273,19 @@ function setProduct (p) {
   product.value = p
   const exp = currencies.value.find(c => c.code === p.currencyCode)?.exponent ?? 2
   const u = p.usage || {}
+  const ch = p.chip || {}
   Object.assign(form, p, u, p.renewal || {}, { emvScheme: p.emv?.scheme, emvDataList: p.emv?.dataList, feePlanCode: u.feePlanCode || '' }, {
+    imkSmiKeyName: ch.imkSmiKeyName || null, contactlessEnabled: ch.contactlessEnabled !== false, verifyCvv2: !!ch.verifyCvv2,
+    contactlessTxnLimit: toMajor(ch.contactlessTxnLimit, exp), contactlessCvmLimit: toMajor(ch.contactlessCvmLimit, exp),
+    contactlessCumulativeLimit: toMajor(ch.contactlessCumulativeLimit, exp)
+  }, {
     description: p.description || '', chipProfile: p.chipProfile || '',
     dailyWdAmount: toMajor(p.dailyWdAmount, exp), perTxnWdMax: toMajor(p.perTxnWdMax, exp)
   })
   for (const k of USAGE_MONEY) form[k] = toMajor(u[k], exp)
 }
+
+const blankMinor = v => v === null || v === undefined || v === '' ? null : toMinor(Number(v), exponent.value)
 
 async function submit () {
   if (await formRef.value.validate()) save()
@@ -277,6 +298,11 @@ async function save () {
     dailyWdAmount: toMinor(form.dailyWdAmount, exponent.value),
     perTxnWdMax: toMinor(form.perTxnWdMax, exponent.value),
     emv: { scheme: form.emvScheme, dataList: form.emvDataList },
+    chip: {
+      imkSmiKeyName: form.imkSmiKeyName || null, contactlessEnabled: form.contactlessEnabled, verifyCvv2: form.verifyCvv2,
+      contactlessTxnLimit: blankMinor(form.contactlessTxnLimit), contactlessCvmLimit: blankMinor(form.contactlessCvmLimit),
+      contactlessCumulativeLimit: blankMinor(form.contactlessCumulativeLimit)
+    },
     renewal: { autoRenew: form.autoRenew, leadDays: form.leadDays, samePan: form.samePan, pendingPrintMaxDays: form.pendingPrintMaxDays },
     usage: {
       atmEnabled: form.atmEnabled, posEnabled: form.posEnabled, ecomEnabled: form.ecomEnabled,
