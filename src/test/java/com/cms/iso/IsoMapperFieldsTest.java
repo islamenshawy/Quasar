@@ -25,4 +25,17 @@ class IsoMapperFieldsTest {
         assertNull(IsoMapper.cvv2("CV2AB"));
         assertNull(IsoMapper.cvv2(null));
     }
+
+    @Test
+    void taggedValuesOfField48TogetherWithCvv2() {
+        String cavv = "0101010795894" + "6ED67C9291A004BA492F6674286";
+        String f48 = "CV2123TKN164895371234567897" + "CAV" + cavv + "ECI05";
+        assertEquals("123", IsoMapper.cvv2(f48));
+        assertEquals("4895371234567897", IsoMapper.token(f48));
+        assertEquals(cavv, IsoMapper.tagged(f48, "CAV([0-9A-Fa-f]{40})"));
+        assertEquals("05", IsoMapper.tagged(f48, "ECI([0-9]{2})"));
+        assertNull(IsoMapper.token("TKN09123456789"));      // token numbers are 13-19 digits
+        assertNull(IsoMapper.token("TKN161234"));            // shorter than announced
+        assertNull(IsoMapper.tagged("CAV0101", "CAV([0-9A-Fa-f]{40})"));
+    }
 }
