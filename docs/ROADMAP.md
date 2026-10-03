@@ -17,6 +17,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | IN-05 | payShield config: LMK type (variant/key block), header length, PIN block format | CMS-043 |
 | IN-07 | SMS and e-mail gateway: API, sender id, delivery receipts, Arabic encoding, rate limits | CMS-105 |
 | IN-06 | Core banking API spec: funds check / debit / hold / reverse, idempotency, error codes, timeouts; stand-in policy per product | CMS-090 |
+| IN-08 | Token service provider issuer specs (VTS / MDES: token authorisation, ID&V, notifications, lifecycle, token data in authorisations); ACS integration and CAVV layout / key; PIN encryption from the mobile app | CMS-115 |
 | IN-06 | Kiosk PIN entry key (TPK or ZPK) and format | CMS-044 |
 | IN-07 | Real segments, account types, products and eligibility matrix | CMS-045 |
 
@@ -83,7 +84,7 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-048 | Reversals: full and partial, idempotent, duplicate detection; stand-in advices | Done |
 | CMS-049 | Account top-up / funding and adjustments (admin), with double-entry postings | Done |
 | CMS-050 | Admin: card controls and limit overrides, reset PIN tries, transactions, statements, holds, GL | Done |
-| CMS-066 | Funds check for CORE_BANKING accounts (core banking interface) | Planned (declines 907 until then) |
+| CMS-066 | Funds check for CORE_BANKING accounts (core banking interface) | Done in CMS-090 |
 | CMS-043 | Key-block LMK support in HSM client | Blocked (IN-05) |
 | CMS-044 | Kiosk PIN key handling (TPK vs ZPK) | Blocked (IN-06) |
 | CMS-045 | Load real product catalogue and eligibility | Blocked (IN-07) |
@@ -112,6 +113,8 @@ Last updated: 2026-09-28. Current version: **0.4.0**.
 | CMS-101 | FX rates feed from treasury (file or API) instead of manual entry | Planned |
 | CMS-105 | Customer notifications (outbox, templates EN/AR, preferences) and OTP service for channels | Done; gateway provisional (IN-07) |
 | CMS-106 | Delivery receipts from the SMS gateway, push notifications to the mobile app | Planned |
+| CMS-115 | Digital channels: wallet tokens (TSP issuer side, vault, lifecycle outbox, token payments), 3-D Secure decisions and CAVV, cardholder app API | Done; TSP / ACS contracts, field 48 tags and CAVV layout provisional (IN-08) |
+| CMS-116 | Push provisioning from the bank app, token-level controls, merchant (card-on-file) tokens, 3-D Secure attempts (ECI 06 / 07) and PSD2-style exemptions | Planned |
 | CMS-096 | Fraud scoring model / external fraud engine hook, cardholder confirmation by SMS | Planned (after CMS-105) |
 | CMS-058 | EMV data in perso response if CMS owns ICC key derivation | Blocked (IN-03) |
 | CMS-059 | Final track discretionary data per product | Blocked (IN-04) |

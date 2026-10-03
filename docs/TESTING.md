@@ -211,6 +211,24 @@ Needs hsm-sim 1.2.0 (KU). Script and contactless cases go through BASE24 with th
 | K22-K25 | Magstripe read with CVV1 / with iCVV; chip read with iCVV / with CVV1 | 000; 129; 000; 129 |
 | K26-K28 | E-commerce without CVV2; wrong CVV2; right CVV2 | 129 "CVV2 required"; 129 "CVV2 mismatch"; 000 |
 
+## 3j. Digital channels catalogue (`scripts/digital-test.sh`)
+
+Needs the dev profile (TSP and ACS simulators, LOG SMS sink) and the seed keys ZPK_CHANNEL / CAVV_P01. P02 is changed for the run (e-commerce on, no-PIN contactless 600.00, 3-D Secure) and restored at the end.
+
+| ID | Case | Expected |
+|---|---|---|
+| D00-D03 | P02 set up; green token request with CVV2; vault content; SMS to the cardholder | ACTIVE token, last 4 only, TOKEN_ADDED |
+| D04-D06 | Plastic tap 700.00 without PIN; the same with the token; unknown token | 112; 000 (device verified); 111 |
+| D07-D10 | Wallet risk 50: yellow + code; wrong code; right code; risk 85 | OTP_SMS; no token; ACTIVE; RED, DECLINED |
+| D11-D16 | Operator suspends; token payment; TSP told; TSP down, resume; TSP back; payment | SUSPENDED; 119; SUSPEND sent; PENDING with error; SENT; 000 |
+| D17-D20 | Card blocked; card active; wallet deletes a token | tokens suspended (CARD_BLOCKED); resumed; DELETED, nothing sent to the TSP |
+| D21-D26 | Plastic lost and replaced; replacement activated; TSP told; phone pays on the new card; wrong TSP key; request for the lost card | token suspended; moved and ACTIVE; UPDATE_CARD with new last 4; 000; 401; RED CARD_LOST |
+| D27-D29 | 300.00 authentication; payment with the CAVV; same CAVV again | frictionless ECI 05; 000; 129 CAVV already used |
+| D30-D36 | 2,000.00 on a new device; wrong code; right code; altered CAVV; 3,000.00; 2,000.00; 3-D Secure required, no CAVV | challenge; C, 2 left; Y; 129 mismatch; 129 amount; 000; 119 |
+| D37-D45 | App: cards; another customer's card; freeze; purchase; unfreeze; international off; abroad; on; transaction list | masked list; not found; 104; 000; 119; 000; newest first |
+| D46-D51 | Details without code; with a verified code; code reused; PIN set in the app; ATM with new PIN; old PIN | OTP_REQUIRED; PAN + CVV2; OTP_REQUIRED; ACTIVE; 000; 117 |
+| D52-D55 | Delivered card without PIN; activation code not verified; PIN then activation; reported stolen | "Set a PIN first"; OTP_REQUIRED; ACTIVE; STOLEN |
+
 ## 4. Manual UI cases (Quasar console, `/`)
 
 | ID | Steps | Expected |
