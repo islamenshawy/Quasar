@@ -119,7 +119,8 @@ const form = reactive({
   wdFee: 0, biFee: 0, verifyCvv: false, preauthHoldDays: 7, coreStipLimit: 0, feePlanCode: '', fxAllowed: false,
   autoRenew: true, leadDays: 30, samePan: true, pendingPrintMaxDays: 30,
   emvScheme: 'EMV_CSK', emvDataList: '9F02,9F03,9F1A,95,5F2A,9A,9C,9F37,82,9F36,9F10:CVR',
-  imkSmiKeyName: null, contactlessEnabled: true, contactlessTxnLimit: null, contactlessCvmLimit: null, contactlessCumulativeLimit: null, verifyCvv2: false
+  imkSmiKeyName: null, contactlessEnabled: true, contactlessTxnLimit: null, contactlessCvmLimit: null, contactlessCumulativeLimit: null, verifyCvv2: false,
+  tokenEnabled: false, tokenMaxPerCard: 5, tdsEnabled: false, tdsRequired: false, tdsFrictionlessMax: null, cavvKeyName: null
 })
 const USAGE_MONEY = ['dailyPosAmount', 'perTxnPosMax', 'wdFee', 'biFee', 'coreStipLimit']
 
@@ -241,6 +242,21 @@ const sections = computed(() => [
     ]
   },
   {
+    title: 'Wallets and 3-D Secure',
+    note: `Wallet tokens (phones, merchants) through the token service, and online payment authentication by the bank's ACS. Amounts in ${form.currencyCode}.`,
+    fields: [
+      { name: 'tokenEnabled', label: 'Cards can be added to wallets', type: 'toggle', col: 'col-12 col-sm-8' },
+      { name: 'tokenMaxPerCard', label: 'Tokens per card', type: 'number', required: true, col: 'col-12 col-sm-4', rules: [v => (v >= 1 && v <= 20) || '1 to 20'] },
+      { name: 'tdsEnabled', label: '3-D Secure by the bank\'s ACS', type: 'toggle', col: 'col-12 col-sm-6' },
+      { name: 'tdsRequired', label: 'Decline online purchases without 3-D Secure', type: 'toggle', col: 'col-12 col-sm-6' },
+      { name: 'cavvKeyName', label: 'CAVV key', type: 'select', col: 'col-12 col-sm-6',
+        hint: 'CVK-type key the HSM uses to make and check the authentication value',
+        options: [{ label: 'None', value: null }, ...keyOptions('CVK')] },
+      { name: 'tdsFrictionlessMax', label: 'No challenge up to', type: 'number', step: 'any', prefix: form.currencyCode, col: 'col-12 col-sm-6',
+        hint: 'Low-risk payments up to this amount pass without a code; blank = always ask for a code' }
+    ]
+  },
+  {
     title: 'Renewal and printing',
     note: 'Used by the CARD_RENEWAL and STALE_PENDING_PRINT batch jobs.',
     fields: [
@@ -274,10 +290,14 @@ function setProduct (p) {
   const exp = currencies.value.find(c => c.code === p.currencyCode)?.exponent ?? 2
   const u = p.usage || {}
   const ch = p.chip || {}
+  const dg = p.digital || {}
   Object.assign(form, p, u, p.renewal || {}, { emvScheme: p.emv?.scheme, emvDataList: p.emv?.dataList, feePlanCode: u.feePlanCode || '' }, {
     imkSmiKeyName: ch.imkSmiKeyName || null, contactlessEnabled: ch.contactlessEnabled !== false, verifyCvv2: !!ch.verifyCvv2,
     contactlessTxnLimit: toMajor(ch.contactlessTxnLimit, exp), contactlessCvmLimit: toMajor(ch.contactlessCvmLimit, exp),
     contactlessCumulativeLimit: toMajor(ch.contactlessCumulativeLimit, exp)
+  }, {
+    tokenEnabled: !!dg.tokenEnabled, tokenMaxPerCard: dg.tokenMaxPerCard ?? 5, tdsEnabled: !!dg.tdsEnabled, tdsRequired: !!dg.tdsRequired,
+    cavvKeyName: dg.cavvKeyName || null, tdsFrictionlessMax: toMajor(dg.tdsFrictionlessMax, exp)
   }, {
     description: p.description || '', chipProfile: p.chipProfile || '',
     dailyWdAmount: toMajor(p.dailyWdAmount, exp), perTxnWdMax: toMajor(p.perTxnWdMax, exp)
@@ -302,6 +322,10 @@ async function save () {
       imkSmiKeyName: form.imkSmiKeyName || null, contactlessEnabled: form.contactlessEnabled, verifyCvv2: form.verifyCvv2,
       contactlessTxnLimit: blankMinor(form.contactlessTxnLimit), contactlessCvmLimit: blankMinor(form.contactlessCvmLimit),
       contactlessCumulativeLimit: blankMinor(form.contactlessCumulativeLimit)
+    },
+    digital: {
+      tokenEnabled: form.tokenEnabled, tokenMaxPerCard: form.tokenMaxPerCard, tdsEnabled: form.tdsEnabled, tdsRequired: form.tdsRequired,
+      cavvKeyName: form.cavvKeyName || null, tdsFrictionlessMax: blankMinor(form.tdsFrictionlessMax)
     },
     renewal: { autoRenew: form.autoRenew, leadDays: form.leadDays, samePan: form.samePan, pendingPrintMaxDays: form.pendingPrintMaxDays },
     usage: {

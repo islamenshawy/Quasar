@@ -28,6 +28,7 @@ const routes = [
       { path: 'switch-simulator', name: 'switch-sim', component: () => import('./pages/SwitchSimulatorPage.vue'), meta: { title: 'Switch simulator', role: 'write' } },
       { path: 'notifications', name: 'notifications', component: () => import('./pages/NotificationsPage.vue'), meta: { title: 'Notifications' } },
       { path: 'setup/message-templates', name: 'message-templates', component: () => import('./pages/setup/MessageTemplatesPage.vue'), meta: { title: 'Message templates' } },
+      { path: 'digital', name: 'digital', component: () => import('./pages/DigitalChannelsPage.vue'), meta: { title: 'Digital channels' } },
       { path: 'core-banking', name: 'core-banking', component: () => import('./pages/CoreBankingPage.vue'), meta: { title: 'Core banking' } },
       { path: 'gl', name: 'gl', component: () => import('./pages/GlPage.vue'), meta: { title: 'GL accounts' } },
       { path: 'batch', name: 'batch', component: () => import('./pages/BatchJobsPage.vue'), meta: { title: 'Batch jobs' } },

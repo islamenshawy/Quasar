@@ -13,6 +13,8 @@
                  :label="`Reset PIN tries (${k.pinTries})`" @click="resetTries" />
           <q-btn v-if="can.write && k.status === 'PENDING_PRINT'" outline no-caps color="primary" icon="visibility"
                  label="Show number for printing" @click="reveal" />
+          <q-btn v-if="can.write && !k.frozen && ['ACTIVE','BLOCKED','PIN_BLOCKED'].includes(k.status)" outline no-caps color="primary"
+                 icon="ac_unit" label="Freeze" @click="freeze(true)" />
           <q-btn v-if="can.write && replaceable" outline no-caps color="primary" icon="autorenew" label="Replace card"
                  @click="replaceDialog = true" />
           <StatusAction v-if="can.write" :current="k.status" :targets="k.allowedTransitions" entity="card" :on-change="changeStatus" />
@@ -27,6 +29,13 @@
             <template #avatar><q-icon name="print" color="warning" /></template>
             Waiting for Dexxis to print. Perso data fetched {{ k.persoFetchCount }} time(s)
             <span v-if="k.lastPersoFetchAt">, last {{ dateTime(k.lastPersoFetchAt) }}</span>.
+          </q-banner>
+          <q-banner v-if="k.frozen" rounded class="bg-blue-1 text-dark q-mt-md">
+            <template #avatar><q-icon name="ac_unit" color="info" /></template>
+            Frozen by the cardholder: every transaction declines (104) until it is unfrozen. The card's status is unchanged.
+            <template #action>
+              <q-btn v-if="can.write" flat no-caps color="primary" label="Unfreeze" @click="freeze(false)" />
+            </template>
           </q-banner>
           <q-banner v-if="k.status === 'PIN_BLOCKED'" rounded class="bg-orange-1 text-dark q-mt-md">
             <template #avatar><q-icon name="password" color="warning" /></template>
@@ -62,6 +71,7 @@
           <q-tab name="transactions" label="Transactions" />
           <q-tab name="fees" :label="`Fees${fees.items?.length ? ' (' + fees.items.length + ')' : ''}`" @click="loadFees" />
           <q-tab name="chip" label="Chip" @click="loadScripts" />
+          <q-tab name="digital" label="Wallets & 3-D Secure" />
           <q-tab name="history" label="Status history" />
           <q-tab name="activity" label="Activity" />
         </q-tabs>
@@ -111,6 +121,9 @@
               </q-card>
             </q-dialog>
           </q-tab-panel>
+          <q-tab-panel name="digital">
+            <CardDigitalPanel :card-id="k.id" />
+          </q-tab-panel>
           <q-tab-panel name="history">
             <q-timeline color="primary" layout="dense">
               <q-timeline-entry v-for="(h, i) in history" :key="i" :subtitle="`${dateTime(h.changedAt)} · ${h.changedBy}`"
@@ -157,6 +170,7 @@ import AuditTrail from '../components/AuditTrail.vue'
 import CardLimitsCard from '../components/CardLimitsCard.vue'
 import ReplaceCardDialog from '../components/ReplaceCardDialog.vue'
 import TxnTable from '../components/TxnTable.vue'
+import CardDigitalPanel from '../components/CardDigitalPanel.vue'
 import { api, pending } from '../lib/api.js'
 import { can } from '../lib/session.js'
 import { dateTime, expiry, label, money, statusColor } from '../lib/format.js'
@@ -234,6 +248,21 @@ async function changeStatus (status, reason) {
   const res = await api.post(`/admin/cards/${props.id}/status`, { status, reason })
   if (!pending(res)) Notify.create({ type: 'positive', message: `Card is now ${label(status).toLowerCase()}` })
   load()
+}
+
+function freeze (frozen) {
+  $q.dialog({
+    title: frozen ? 'Freeze card' : 'Unfreeze card',
+    message: frozen ? 'At the cardholder\'s request: every transaction is declined until the card is unfrozen.' : 'Transactions work again.',
+    prompt: { model: '', type: 'text', label: 'Reason', isValid: v => !!(v && v.trim()), outlined: true },
+    cancel: true
+  }).onOk(async reason => {
+    try {
+      k.value = await api.post(`/admin/cards/${props.id}/freeze`, { frozen, reason })
+      Notify.create({ type: 'positive', message: frozen ? 'Card frozen' : 'Card unfrozen' })
+      trail.value?.reload()
+    } catch { /* shown */ }
+  })
 }
 
 function resetTries () {

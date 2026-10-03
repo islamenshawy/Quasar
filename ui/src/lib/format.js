@@ -74,3 +74,13 @@ const ICONS = {
   CANCELLED: 'cancel'
 }
 export const statusIcon = s => ICONS[s] || 'swap_horiz'
+
+/** Why a wallet token changed state (CMS-115), in plain words. */
+export function tokenReason (r) {
+  if (!r) return ''
+  if (r === 'REPLACED') return 'moved to the replacement card'
+  if (r === 'CARD_ACTIVE') return 'card active again'
+  if (r.startsWith('WALLET')) return 'by the wallet' + (r.includes(':') ? ': ' + r.slice(r.indexOf(':') + 1) : '')
+  if (r.startsWith('CARD_')) return 'card ' + r.slice(5).toLowerCase().replace(/_/g, ' ')
+  return r
+}

@@ -34,6 +34,7 @@ export function navGroups ({ devTools = false, pending = 0, fraud = 0 } = {}) {
       title: 'Control',
       items: [
         { to: '/core-banking', label: 'Core banking', icon: 'hub', keys: 'saf store forward stand-in stip host funds' },
+        { to: '/digital', label: 'Digital channels', icon: 'wallet', keys: 'tokens wallet apple google pay vts mdes tsp 3ds acs cavv app' },
         { to: '/notifications', label: 'Notifications', icon: 'forum', keys: 'sms email otp messages alerts outbox' },
         { to: '/gl', label: 'GL accounts', icon: 'account_tree', keys: 'ledger general' },
         { to: '/batch', label: 'Batch jobs', icon: 'schedule', keys: 'scheduler renewal expiry' },

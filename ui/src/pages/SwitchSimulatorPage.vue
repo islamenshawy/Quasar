@@ -75,6 +75,16 @@
               <q-toggle v-if="f.channel === 'POS'" v-model="f.contactless" label="Contactless tap (field 22 = M)" />
               <q-toggle v-if="f.chip" v-model="f.failScripts" label="Chip refuses issuer scripts (reports failure)" color="warning" />
               <q-input v-if="f.channel === 'ECOM'" v-model="f.cvv2" outlined dense maxlength="4" label="CVV2 (field 48)" class="mono" />
+              <div v-if="f.channel === 'ECOM'" class="row q-col-gutter-sm">
+                <div class="col-9">
+                  <q-input v-model="f.cavv" outlined dense maxlength="40" label="3-D Secure CAVV (field 48)" class="mono"
+                           hint="40 hex from Digital channels → ACS simulator" />
+                </div>
+                <div class="col-3"><q-input v-model="f.eci" outlined dense maxlength="2" label="ECI" class="mono" /></div>
+              </div>
+              <q-select v-if="f.channel !== 'ATM' && cardTokens.length" v-model="f.tokenRef" outlined dense emit-value map-options clearable
+                        label="Pay with a wallet token (field 48)" :options="cardTokens"
+                        hint="The scheme sends the card number plus the token it replaced" />
               <q-select v-if="f.chip" v-model="f.tvr" :options="tvrOptions" emit-value map-options outlined dense
                         label="Terminal verification results (TVR, tag 95)">
                 <template #append><span class="mono text-caption">{{ f.tvr }}</span></template>
@@ -189,7 +199,14 @@ import { label, toMinor, money as fmt } from '../lib/format.js'
 const $q = useQuasar()
 
 const typeOptions = ['BALANCE_INQUIRY', 'WITHDRAWAL', 'PURCHASE', 'PREAUTH', 'REFUND', 'PIN_CHANGE'].map(t => ({ label: label(t), value: t }))
-const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000', mcc: '', country: '', contactless: false, failScripts: false, cvv2: '' })
+const f = reactive({ card: null, type: 'BALANCE_INQUIRY', channel: 'ATM', currency: '818', amount: null, pin: '', newPin: '', terminalId: 'ATM00001', merchant: '', advice: false, chip: false, tamper: false, tvr: '0000000000', mcc: '', country: '', contactless: false, failScripts: false, cvv2: '', cavv: '', eci: '05', tokenRef: null })
+const cardTokens = ref([])
+watch(() => f.card?.id, async id => {
+  f.tokenRef = null
+  cardTokens.value = !id ? [] : (await api.get(`/admin/cards/${id}/tokens`, { quiet: true }).catch(() => []))
+    .filter(t => ['ACTIVE', 'SUSPENDED'].includes(t.status))
+    .map(t => ({ label: `${t.wallet} · ${t.deviceName || t.deviceType || ''} · •••• ${t.tokenLast4} (${label(t.status)})`, value: t.tokenRef }))
+})
 const tvrOptions = TVR_PRESETS
 const iccTab = ref('request')
 const pasted = ref('')
@@ -252,7 +269,10 @@ async function send () {
     chip: f.chip && f.channel !== 'ECOM', tamperArqc: f.chip && f.tamper, tvr: f.chip ? f.tvr : null,
     mcc: /^[0-9]{4}$/.test(f.mcc) ? f.mcc : null, country: /^[0-9]{3}$/.test(f.country) ? f.country : null,
     contactless: f.channel === 'POS' && f.contactless, failScripts: f.chip && f.failScripts,
-    cvv2: f.channel === 'ECOM' && f.cvv2 ? f.cvv2 : null
+    cvv2: f.channel === 'ECOM' && f.cvv2 ? f.cvv2 : null,
+    cavv: f.channel === 'ECOM' && /^[0-9A-Fa-f]{40}$/.test(f.cavv) ? f.cavv : null,
+    eci: f.channel === 'ECOM' && /^[0-9]{2}$/.test(f.eci) ? f.eci : null,
+    tokenRef: f.channel !== 'ATM' && f.tokenRef ? f.tokenRef : null
   }
   const amt = needsAmount.value ? ` ${f.amount}` : ''
   await post(body, `${label(f.type)}${amt} · ${f.channel} · ${f.card.maskedPan}`, f.type)
