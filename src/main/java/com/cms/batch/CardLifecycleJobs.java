@@ -7,6 +7,7 @@ import com.cms.core.CoreBankingClient;
 import com.cms.core.CoreBankingClient.Posting;
 import com.cms.core.CoreSafService;
 import com.cms.core.CoreSafService.SafPayload;
+import com.cms.digital.TokenService;
 import com.cms.ledger.LedgerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,9 +34,12 @@ public class CardLifecycleJobs {
     private final LedgerService ledger;
     private final CoreBankingClient core;
     private final CoreSafService saf;
+    private final TokenService tokens;
 
     public CardLifecycleJobs(BatchService batch, JdbcTemplate jdbc, PlatformTransactionManager txm,
-                             CardIssuanceService issuance, LedgerService ledger, CoreBankingClient core, CoreSafService saf) {
+                             CardIssuanceService issuance, LedgerService ledger, CoreBankingClient core, CoreSafService saf,
+                             TokenService tokens) {
+        this.tokens = tokens;
         this.jdbc = jdbc;
         this.tx = new TransactionTemplate(txm);
         this.issuance = issuance;
@@ -62,6 +66,7 @@ public class CardLifecycleJobs {
                 if (from == null || !LIVE.contains("'" + from + "'")) return false;
                 jdbc.update("UPDATE card SET status = 'EXPIRED', version = version + 1 WHERE id = ?", id);
                 history(id, from, "EXPIRED", "expiry date passed", actor);
+                tokens.cardStatusChanged(id, "EXPIRED", actor);
                 return true;
             });
             if (Boolean.TRUE.equals(ok)) done++;

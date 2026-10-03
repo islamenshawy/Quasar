@@ -54,17 +54,49 @@ public class OtpService {
         this.maxPerWindow = maxPerWindow;
     }
 
+    private record Card(long id, String mobile) {}
+
     @Transactional
     public Sent send(String pan, String purpose, String channelUser) {
         if (pan == null || !pan.matches("[0-9]{13,19}")) throw bad("pan is required");
-        String p = purpose == null || purpose.isBlank() ? "AUTHENTICATION" : purpose.trim().toUpperCase();
-        if (!p.matches("[A-Z0-9_]{3,32}")) throw bad("purpose: 3-32 of A-Z, 0-9, _");
-        record Card(long id, String mobile) {}
         Card c = jdbc.query("""
                 SELECT k.id, cu.mobile FROM card k JOIN customer cu ON cu.id = k.customer_id
                  WHERE k.pan_hash = ? AND k.status = 'ACTIVE' ORDER BY k.id DESC LIMIT 1 FOR UPDATE OF k
                 """, rs -> rs.next() ? new Card(rs.getLong(1), rs.getString(2)) : null, panCrypto.hash(pan));
         if (c == null) throw new IssuanceException("CARD_NOT_FOUND", "No active card with this number");
+        return issue(c, purpose, channelUser);
+    }
+
+    /**
+     * A code for a card the caller already identified (cardholder app, token ID&amp;V, 3-D Secure challenge). Any card
+     * status: activation and PIN set codes go to cards that are not active yet.
+     */
+    @Transactional
+    public Sent sendForCard(long cardId, String purpose, String channelUser) {
+        Card c = jdbc.query("""
+                SELECT k.id, cu.mobile FROM card k JOIN customer cu ON cu.id = k.customer_id WHERE k.id = ? FOR UPDATE OF k
+                """, rs -> rs.next() ? new Card(rs.getLong(1), rs.getString(2)) : null, cardId);
+        if (c == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
+        return issue(c, purpose, channelUser);
+    }
+
+    /**
+     * Consumes a VERIFIED code for the action it was sent for: same card, same purpose, verified in the last 10
+     * minutes, used once.
+     */
+    @Transactional
+    public void consume(UUID otpId, long cardId, String purpose) {
+        if (otpId == null) throw new IssuanceException("OTP_REQUIRED", "A verified one-time password is required");
+        int n = jdbc.update("""
+                UPDATE otp SET status = 'USED' WHERE id = ? AND card_id = ? AND purpose = ? AND status = 'VERIFIED'
+                   AND verified_at > now() - interval '10 minutes'
+                """, otpId, cardId, purpose);
+        if (n == 0) throw new IssuanceException("OTP_REQUIRED", "The one-time password is not verified for this card and action");
+    }
+
+    private Sent issue(Card c, String purpose, String channelUser) {
+        String p = purpose == null || purpose.isBlank() ? "AUTHENTICATION" : purpose.trim().toUpperCase();
+        if (!p.matches("[A-Z0-9_]{3,32}")) throw bad("purpose: 3-32 of A-Z, 0-9, _");
         if (c.mobile() == null || c.mobile().isBlank()) throw new IssuanceException("INVALID_STATUS", "The cardholder has no mobile number");
         int recent = jdbc.queryForObject("SELECT count(*) FROM otp WHERE card_id = ? AND created_at > now() - interval '10 minutes'",
                 Integer.class, c.id());

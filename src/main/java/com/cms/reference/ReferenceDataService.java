@@ -47,7 +47,15 @@ public class ReferenceDataService {
                           String cvkKeyName, String imkAcKeyName, int pinTryLimit, int dailyWdCount,
                           long dailyWdAmount, long perTxnWdMax, int maxCardsPerAccount, boolean active,
                           long cardsIssued, long rangeRemaining, UsageSettings usage, RenewalSettings renewal,
-                          EmvSettings emv, ChipSettings chip) {}
+                          EmvSettings emv, ChipSettings chip, DigitalSettings digital) {}
+
+    /**
+     * Digital channels (CMS-115): wallet tokens and 3-D Secure. tdsFrictionlessMax: low-risk e-commerce up to this
+     * amount (account currency, minor units) is authenticated without a challenge; null = always challenge.
+     * cavvKeyName: CVK-type key that makes and checks the CAVV. tdsRequired: e-commerce without a CAVV is declined.
+     */
+    public record DigitalSettings(Boolean tokenEnabled, Integer tokenMaxPerCard, Boolean tdsEnabled, Boolean tdsRequired,
+                                  Long tdsFrictionlessMax, String cavvKeyName) {}
 
     /**
      * Chip and card-verification settings (CMS-110). Contactless amounts in minor units, null = no limit.
@@ -79,7 +87,7 @@ public class ReferenceDataService {
                                  String cvkKeyName, String imkAcKeyName, Integer pinTryLimit,
                                  Integer dailyWdCount, Long dailyWdAmount, Long perTxnWdMax,
                                  Integer maxCardsPerAccount, Boolean active, UsageSettings usage, RenewalSettings renewal,
-                                 EmvSettings emv, ChipSettings chip) {}
+                                 EmvSettings emv, ChipSettings chip, DigitalSettings digital) {}
 
     public record Eligibility(String accountTypeCode, String segmentCode) {}
 
@@ -311,7 +319,8 @@ public class ReferenceDataService {
                    p.auto_renew, p.renewal_lead_days, p.renew_same_pan, p.pending_print_max_days, p.emv_scheme, p.emv_data_list,
                    p.core_stip_limit, p.fee_plan_code, p.fx_allowed,
                    p.imk_smi_key_name, p.contactless_enabled, p.contactless_txn_limit, p.contactless_cvm_limit,
-                   p.contactless_cumulative_limit, p.verify_cvv2
+                   p.contactless_cumulative_limit, p.verify_cvv2,
+                   p.token_enabled, p.token_max_per_card, p.tds_enabled, p.tds_required, p.tds_frictionless_max, p.cavv_key_name
               FROM card_product p
             """;
 
@@ -354,6 +363,7 @@ public class ReferenceDataService {
         saveRenewal(id, r.renewal() == null ? new RenewalSettings(true, 30, true, 30) : r.renewal());
         if (r.emv() != null) saveEmv(id, r.emv());
         if (r.chip() != null) saveChip(id, r.chip());
+        if (r.digital() != null) saveDigital(id, r.digital());
         audit.record(op, "CREATE_PRODUCT", "card_product", id, Map.of("code", code, "bin", r.bin()));
         return product(code);
     }
@@ -382,6 +392,7 @@ public class ReferenceDataService {
         saveRenewal(cur.id(), r.renewal() == null ? cur.renewal() : r.renewal());
         saveEmv(cur.id(), r.emv() == null ? cur.emv() : r.emv());
         if (r.chip() != null) saveChip(cur.id(), r.chip());
+        if (r.digital() != null) saveDigital(cur.id(), r.digital());
         audit.record(op, "UPDATE_PRODUCT", "card_product", cur.id(), Map.of("code", code));
         return product(code);
     }
@@ -510,6 +521,22 @@ public class ReferenceDataService {
                 c.contactlessCumulativeLimit(), Boolean.TRUE.equals(c.verifyCvv2()), productId);
     }
 
+    private void saveDigital(long productId, DigitalSettings d) {
+        int max = d.tokenMaxPerCard() == null ? 5 : d.tokenMaxPerCard();
+        if (max < 1 || max > 20) bad("Tokens per card must be 1 to 20");
+        if (d.tdsFrictionlessMax() != null && d.tdsFrictionlessMax() < 0) bad("Frictionless limit cannot be negative");
+        String cavv = d.cavvKeyName() == null || d.cavvKeyName().isBlank() ? null : d.cavvKeyName().trim();
+        if (cavv != null) requireKey(cavv, "CVK");
+        boolean tds = Boolean.TRUE.equals(d.tdsEnabled());
+        if (tds && cavv == null) bad("3-D Secure needs a CAVV key");
+        if (Boolean.TRUE.equals(d.tdsRequired()) && !tds) bad("3-D Secure can only be required when it is enabled");
+        jdbc.update("""
+                UPDATE card_product SET token_enabled = ?, token_max_per_card = ?, tds_enabled = ?, tds_required = ?,
+                       tds_frictionless_max = ?, cavv_key_name = ? WHERE id = ?
+                """, Boolean.TRUE.equals(d.tokenEnabled()), max, tds, Boolean.TRUE.equals(d.tdsRequired()),
+                d.tdsFrictionlessMax(), cavv, productId);
+    }
+
     private void requireKey(String name, String type) {
         if (name == null || name.isBlank()) bad(type + " key is required");
         if (!exists("SELECT count(*) FROM hsm_key WHERE key_name = ? AND key_type = ? AND active", name, type)) {
@@ -531,7 +558,9 @@ public class ReferenceDataService {
                 new RenewalSettings(rs.getBoolean(38), rs.getInt(39), rs.getBoolean(40), rs.getInt(41)),
                 new EmvSettings(rs.getString(42), rs.getString(43)),
                 new ChipSettings(rs.getString(47), rs.getBoolean(48), (Long) rs.getObject(49), (Long) rs.getObject(50),
-                        (Long) rs.getObject(51), rs.getBoolean(52)));
+                        (Long) rs.getObject(51), rs.getBoolean(52)),
+                new DigitalSettings(rs.getBoolean(53), rs.getInt(54), rs.getBoolean(55), rs.getBoolean(56),
+                        (Long) rs.getObject(57), rs.getString(58)));
     }
 
     // =========================================================================

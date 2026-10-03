@@ -1,6 +1,7 @@
 package com.cms.card;
 
 import com.cms.common.AuditLog;
+import com.cms.digital.TokenService;
 import com.cms.notify.NotificationService;
 import com.cms.common.Page;
 import com.cms.security.PanCrypto;
@@ -31,7 +32,8 @@ public class CardAdminService {
                            String issueChannel, String issueLocation, int persoFetchCount,
                            OffsetDateTime lastPersoFetchAt, OffsetDateTime createdAt, String createdBy,
                            OffsetDateTime printedAt, OffsetDateTime activatedAt, List<String> allowedTransitions,
-                           String psn, Long replacesCardId, String replacementReason, Long replacedByCardId) {}
+                           String psn, Long replacesCardId, String replacementReason, Long replacedByCardId,
+                           boolean frozen) {}
 
     public record StatusChange(String oldStatus, String newStatus, String reason, String changedBy,
                                OffsetDateTime changedAt) {}
@@ -50,7 +52,7 @@ public class CardAdminService {
                    a.account_number, k.embossing_name, k.pin_tries, p.pin_try_limit, k.pvv IS NOT NULL,
                    k.issue_channel, k.issue_location, k.perso_fetch_count, k.last_perso_fetch_at, k.created_at,
                    k.created_by, k.printed_at, k.activated_at, k.psn, k.replaces_card_id, k.replacement_reason,
-                   (SELECT max(n.id) FROM card n WHERE n.replaces_card_id = k.id AND n.status <> 'CANCELLED')
+                   (SELECT max(n.id) FROM card n WHERE n.replaces_card_id = k.id AND n.status <> 'CANCELLED'), k.frozen
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN customer c     ON c.id = k.customer_id
@@ -61,12 +63,15 @@ public class CardAdminService {
     private final PanCrypto panCrypto;
     private final AuditLog audit;
     private final NotificationService notifications;
+    private final TokenService tokens;
 
-    public CardAdminService(JdbcTemplate jdbc, PanCrypto panCrypto, AuditLog audit, NotificationService notifications) {
+    public CardAdminService(JdbcTemplate jdbc, PanCrypto panCrypto, AuditLog audit, NotificationService notifications,
+                            TokenService tokens) {
         this.jdbc = jdbc;
         this.panCrypto = panCrypto;
         this.audit = audit;
         this.notifications = notifications;
+        this.tokens = tokens;
     }
 
     public CardView get(long id) {
@@ -165,6 +170,7 @@ public class CardAdminService {
         audit.record(operator, "CARD_STATUS", "card", id,
                 Map.of("from", r.status(), "to", status, "reason", reason.trim()));
         notifications.enqueue("CARD_STATUS", id, null, Map.of("status", status.replace('_', ' ').toLowerCase()), 0);
+        tokens.cardStatusChanged(id, status, operator);
         return get(id);
     }
 
@@ -174,7 +180,8 @@ public class CardAdminService {
     public record CardLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled, boolean contactlessEnabled,
                              Integer dailyWdCountLimit, Long dailyWdAmountLimit, Long perTxnWdLimit,
                              Integer dailyPosCountLimit, Long dailyPosAmountLimit, Long perTxnPosLimit,
-                             ProductLimits product, Usage today, String currencyCode, int exponent) {}
+                             ProductLimits product, Usage today, String currencyCode, int exponent,
+                             boolean internationalEnabled, boolean frozen) {}
 
     public record ProductLimits(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled, boolean contactlessEnabled, int dailyWdCount,
                                 long dailyWdAmount, long perTxnWdMax, int dailyPosCount, long dailyPosAmount,
@@ -185,7 +192,7 @@ public class CardAdminService {
     public record ControlsRequest(boolean atmEnabled, boolean posEnabled, boolean ecomEnabled,
                                   Integer dailyWdCountLimit, Long dailyWdAmountLimit, Long perTxnWdLimit,
                                   Integer dailyPosCountLimit, Long dailyPosAmountLimit, Long perTxnPosLimit,
-                                  String reason, Boolean contactlessEnabled) {}
+                                  String reason, Boolean contactlessEnabled, Boolean internationalEnabled) {}
 
     public CardLimits limits(long cardId) {
         get(cardId);
@@ -199,7 +206,8 @@ public class CardAdminService {
                        k.per_txn_wd_limit, k.daily_pos_count_limit, k.daily_pos_amount_limit, k.per_txn_pos_limit,
                        p.atm_enabled, p.pos_enabled, p.ecom_enabled, p.daily_wd_count, p.daily_wd_amount,
                        p.per_txn_wd_max, p.daily_pos_count, COALESCE(p.daily_pos_amount, p.daily_wd_amount), COALESCE(p.per_txn_pos_max, p.per_txn_wd_max),
-                       a.currency_code, cur.exponent, k.contactless_enabled, p.contactless_enabled
+                       a.currency_code, cur.exponent, k.contactless_enabled, p.contactless_enabled,
+                       k.international_enabled, k.frozen
                   FROM card k JOIN card_product p ON p.id = k.product_id
                   JOIN account a ON a.id = k.account_id JOIN currency cur ON cur.code = a.currency_code
                  WHERE k.id = ?
@@ -208,7 +216,7 @@ public class CardAdminService {
                         (Integer) rs.getObject(7), (Long) rs.getObject(8), (Long) rs.getObject(9),
                         new ProductLimits(rs.getBoolean(10), rs.getBoolean(11), rs.getBoolean(12), rs.getBoolean(22), rs.getInt(13),
                                 rs.getLong(14), rs.getLong(15), rs.getInt(16), rs.getLong(17), rs.getLong(18)),
-                        u, rs.getString(19), rs.getInt(20)), cardId);
+                        u, rs.getString(19), rs.getInt(20), rs.getBoolean(23), rs.getBoolean(24)), cardId);
     }
 
     /**
@@ -231,10 +239,12 @@ public class CardAdminService {
                 UPDATE card SET atm_enabled = ?, pos_enabled = ?, ecom_enabled = ?, daily_wd_count_limit = ?,
                        daily_wd_amount_limit = ?, per_txn_wd_limit = ?, daily_pos_count_limit = ?,
                        daily_pos_amount_limit = ?, per_txn_pos_limit = ?,
-                       contactless_enabled = COALESCE(?, contactless_enabled), version = version + 1
+                       contactless_enabled = COALESCE(?, contactless_enabled),
+                       international_enabled = COALESCE(?, international_enabled), version = version + 1
                  WHERE id = ?
                 """, r.atmEnabled(), r.posEnabled(), r.ecomEnabled(), r.dailyWdCountLimit(), r.dailyWdAmountLimit(),
-                r.perTxnWdLimit(), r.dailyPosCountLimit(), r.dailyPosAmountLimit(), r.perTxnPosLimit(), r.contactlessEnabled(), cardId);
+                r.perTxnWdLimit(), r.dailyPosCountLimit(), r.dailyPosAmountLimit(), r.perTxnPosLimit(), r.contactlessEnabled(),
+                r.internationalEnabled(), cardId);
         Map<String, Object> d = new java.util.LinkedHashMap<>();
         d.put("reason", r.reason().trim());
         d.put("before", controlsOf(before));
@@ -254,6 +264,8 @@ public class CardAdminService {
         m.put("dailyPosCount", l.dailyPosCountLimit());
         m.put("dailyPosAmount", l.dailyPosAmountLimit());
         m.put("perTxnPos", l.perTxnPosLimit());
+        m.put("contactless", l.contactlessEnabled());
+        m.put("international", l.internationalEnabled());
         return m;
     }
 
@@ -276,6 +288,24 @@ public class CardAdminService {
         }
         audit.record(operator, "CARD_PAN_REVEAL", "card", cardId, Map.of("count", shown + 1));
         return panCrypto.decrypt(r.enc());
+    }
+
+    /**
+     * Cardholder lock (CMS-115): a frozen card declines everything (104) until it is unfrozen; its status does not
+     * change. Set from the cardholder app or by an operator on the cardholder's request.
+     */
+    @Transactional
+    public CardView setFrozen(long cardId, boolean frozen, String reason, String actor) {
+        CardView c = get(cardId);
+        if (frozen && !Set.of("ACTIVE", "BLOCKED", "PIN_BLOCKED").contains(c.status())) {
+            throw new IssuanceException("INVALID_STATUS", "Card is " + c.status());
+        }
+        if (c.frozen() == frozen) return c;
+        jdbc.update("UPDATE card SET frozen = ?, version = version + 1 WHERE id = ?", frozen, cardId);
+        audit.record(actor, frozen ? "CARD_FREEZE" : "CARD_UNFREEZE", "card", cardId,
+                Map.of("reason", reason == null || reason.isBlank() ? "-" : reason.trim()));
+        notifications.enqueue("CARD_STATUS", cardId, null, Map.of("status", frozen ? "frozen" : "unfrozen"), 0);
+        return get(cardId);
     }
 
     /** Clears wrong-PIN attempts on an active card (a PIN_BLOCKED card is reactivated with a status change). */
@@ -304,6 +334,6 @@ public class CardAdminService {
                 rs.getObject(24, OffsetDateTime.class), rs.getObject(25, OffsetDateTime.class), rs.getString(26),
                 rs.getObject(27, OffsetDateTime.class), rs.getObject(28, OffsetDateTime.class),
                 TRANSITIONS.getOrDefault(status, Set.of()).stream().sorted().toList(), rs.getString(29),
-                (Long) rs.getObject(30), rs.getString(31), (Long) rs.getObject(32));
+                (Long) rs.getObject(30), rs.getString(31), (Long) rs.getObject(32), rs.getBoolean(33));
     }
 }

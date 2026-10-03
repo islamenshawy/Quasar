@@ -34,6 +34,7 @@ cms:
     kiosk-zpk-name: ZPK_KIOSK     # ZPK under which the kiosk EPP sends PIN blocks
     corehost-zpk-name: ZPK_COREHOST
     corehost-zmk-name: ZMK_COREHOST   # protects ZPKs received in 1804 key change
+    channel-zpk-name: ZPK_CHANNEL     # PIN blocks set from the cardholder app (CMS-115, provisional IN-08)
   dexxis:
     api-key: ${CMS_DEXXIS_API_KEY:}   # X-Api-Key Dexxis must send; empty = Dexxis calls refused
   channel:
@@ -54,6 +55,12 @@ cms:
     ttl-seconds: 300
     max-attempts: 3
     max-per-window: 3                 # codes per card per 10 minutes
+  tsp:                                # token service provider (CMS-115, provisional IN-08)
+    base-url: ${CMS_TSP_URL:}                   # issuer -> TSP lifecycle; empty = messages wait in the outbox
+    api-key: ${CMS_TSP_API_KEY:}                # sent to the TSP
+    inbound-api-key: ${CMS_TSP_INBOUND_API_KEY:}  # X-Api-Key the TSP must send to /api/tsp; empty = refused
+    timeout-ms: 5000
+    poll-ms: 5000
   core-banking:                       # funds interface for CORE_BANKING accounts (CMS-090, provisional IN-06)
     base-url: ${CMS_CORE_BANKING_URL:}          # empty = not connected: core accounts decline (stand-in limit aside)
     api-key: ${CMS_CORE_BANKING_API_KEY:}

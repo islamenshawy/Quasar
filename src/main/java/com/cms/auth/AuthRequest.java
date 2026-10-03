@@ -32,7 +32,10 @@ public record AuthRequest(
         String iccData,             // field 55 as hex; chip transactions only. Never logged.
         String acquirerCountry,     // field 19, ISO 3166 numeric; optional (null = institution country)
         String entryMode,           // CHIP, CONTACTLESS, MAGSTRIPE, MANUAL, ECOM (field 22 position 7); optional
-        String cvv2) {              // card-not-present security code (field 48, provisional); never logged
+        String cvv2,                // card-not-present security code (field 48, provisional); never logged
+        String tokenPan,            // wallet token number of a token payment (field 48 TKN, provisional); never logged
+        String cavv,                // 3-D Secure authentication value, 40 hex (field 48 CAV, provisional)
+        String eci) {               // e-commerce indicator (field 48 ECI, provisional)
 
     /** Without chip data (magstripe, manual, tests). */
     public AuthRequest(TxnType type, Channel channel, String mti, String processingCode, String pan, String expiryYYMM,
@@ -42,7 +45,7 @@ public record AuthRequest(
                        OriginalRef original, Long amountCompleted) {
         this(type, channel, mti, processingCode, pan, expiryYYMM, track2, pinBlock, newPinBlock, amount, currencyNumeric,
                 stan, rrn, transmissionDt, localDt, acquirerId, terminalId, merchantType, cardAcceptor, advice, original,
-                amountCompleted, null, null, null, null);
+                amountCompleted, null, null, null, null, null, null, null);
     }
 
     /**

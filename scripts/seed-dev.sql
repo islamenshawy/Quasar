@@ -3,7 +3,8 @@
 -- Regenerate key rows with: java hsm-sim/HsmSimulator.java seed
 -- ==============================================================
 BEGIN;
-DELETE FROM hsm_key WHERE key_name IN ('ZMK_COREHOST','ZPK_KIOSK','ZPK_COREHOST','PVK_P01','CVK_P01','IMK_AC_P01','IMK_SMI_P01');
+DELETE FROM hsm_key WHERE key_name IN ('ZMK_COREHOST','ZPK_KIOSK','ZPK_COREHOST','PVK_P01','CVK_P01','IMK_AC_P01','IMK_SMI_P01',
+                                       'ZPK_CHANNEL','CAVV_P01');
 -- hsm-sim 1.0.0 test keys (CLEAR values are for TEST ONLY)
 -- ZMK_COREHOST  clear=1C1C1C1C1C1C1C1C2A2A2A2A2A2A2A2A kcv=B29243
 -- ZPK_KIOSK     clear=0B0B0B0B0B0B0B0B1616161616161616 kcv=FB57EE
@@ -12,6 +13,8 @@ DELETE FROM hsm_key WHERE key_name IN ('ZMK_COREHOST','ZPK_KIOSK','ZPK_COREHOST'
 -- CVK_P01       clear=0123456789ABCDEFFEDCBA9876543210 kcv=08D7B4
 -- IMK_AC_P01    clear=4A4A4A4A4A4A4A4A6D6D6D6D6D6D6D6D kcv=437134
 -- IMK_SMI_P01   clear=5A5A5A5A5A5A5A5A3C3C3C3C3C3C3C3C kcv=5595A4 (issuer scripts, hsm-sim 1.2.0)
+-- ZPK_CHANNEL   clear=2D2D2D2D2D2D2D2D7A7A7A7A7A7A7A7A kcv=FAB032 (PIN set in the cardholder app, CMS-115)
+-- CAVV_P01      clear=6E6E6E6E6E6E6E6E1F1F1F1F1F1F1F1F kcv=03F7C7 (3-D Secure CAVV, CMS-115)
 INSERT INTO hsm_key (key_name, key_type, key_scheme, key_under_lmk, kcv) VALUES
  ('ZMK_COREHOST','ZMK','U','UFB2005460F0371BED0A63FA20658651E','B29243'),
  ('ZPK_KIOSK','ZPK','U','UE1649ED60A0FBA6BFEE044A2C86CB343','FB57EE'),
@@ -19,7 +22,9 @@ INSERT INTO hsm_key (key_name, key_type, key_scheme, key_under_lmk, kcv) VALUES
  ('PVK_P01','PVK','U','UE37975838EFAF583692E1F6E8C6A0A55','7B8358'),
  ('CVK_P01','CVK','U','U692E1F6E8C6A0A55E37975838EFAF583','08D7B4'),
  ('IMK_AC_P01','IMK_AC','U','U29CDA3BAACABAFEF4765416FAA5878C7','437134'),
- ('IMK_SMI_P01','IMK_SMI','U','U99F1BC6755ABCC0DED5E925FE9404323','5595A4');
+ ('IMK_SMI_P01','IMK_SMI','U','U99F1BC6755ABCC0DED5E925FE9404323','5595A4'),
+ ('ZPK_CHANNEL','ZPK','U','U01EDAFA72C4331E15A5295417D5F2CD5','FAB032'),
+ ('CAVV_P01','CVK','U','U31F5A5096A14BA9BF0EA63D1A58CED4C','03F7C7');
 
 INSERT INTO card_product (code, name, bin, pan_length, range_start, range_end, next_sequence,
     service_code, validity_months, chip_profile, currency_code, pvki, pvk_key_name, cvk_key_name,
@@ -60,3 +65,9 @@ UPDATE card_product SET core_stip_limit = 50000 WHERE code = 'P02';
 -- PIN above 600.00, 2,000.00 without a PIN before a PIN is asked again
 UPDATE card_product SET imk_smi_key_name = 'IMK_SMI_P01' WHERE code IN ('P01','P02');
 UPDATE card_product SET contactless_txn_limit = 500000, contactless_cvm_limit = 60000, contactless_cumulative_limit = 200000 WHERE code = 'P01';
+
+-- digital channels (CMS-115): both products can go into wallets (up to 5 tokens) and use the bank's ACS with the
+-- test CAVV key; e-commerce up to 500.00 is frictionless when nothing else looks risky
+UPDATE card_product SET token_enabled = TRUE, token_max_per_card = 5, tds_enabled = TRUE, cavv_key_name = 'CAVV_P01',
+       tds_frictionless_max = 50000
+ WHERE code IN ('P01','P02');

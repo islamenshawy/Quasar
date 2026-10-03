@@ -1,5 +1,6 @@
 package com.cms.card;
 
+import com.cms.digital.TokenService;
 import com.cms.fee.FeeService;
 import com.cms.notify.NotificationService;
 import com.cms.hsm.PayShieldClient;
@@ -78,10 +79,11 @@ public class CardIssuanceService {
     private final PinBlockFormat pinBlockFormat;
     private final FeeService fees;
     private final NotificationService notifications;
+    private final TokenService tokens;
 
     public CardIssuanceService(JdbcTemplate jdbc, PanAllocator panAllocator, PanCrypto panCrypto,
                                PayShieldClient hsm, PinService pinService, KeyRepository keys, FeeService fees,
-                               NotificationService notifications,
+                               NotificationService notifications, TokenService tokens,
                                @Value("${cms.keys.kiosk-zpk-name}") String kioskZpkName,
                                @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -94,6 +96,7 @@ public class CardIssuanceService {
         this.pinBlockFormat = pinBlockFormat;
         this.fees = fees;
         this.notifications = notifications;
+        this.tokens = tokens;
     }
 
     private record Product(long id, String code, String serviceCode, int validityMonths,
@@ -264,6 +267,26 @@ public class CardIssuanceService {
         notifications.enqueue("CARD_ACTIVATED", c.id(), null, java.util.Map.of(), 0);
     }
 
+    /**
+     * Activation of a card produced centrally and delivered to the cardholder (status PRINTED, PIN already set by
+     * the PIN mailer or in the app), from the cardholder app after a one-time password, or by an operator.
+     */
+    @Transactional
+    public void activateDelivered(long cardId, String actor) {
+        record Row(String status, String expiry, boolean pinSet) {}
+        Row r = jdbc.query("SELECT status, expiry_yymm, pvv IS NOT NULL FROM card WHERE id = ? FOR UPDATE",
+                rs -> rs.next() ? new Row(rs.getString(1), rs.getString(2), rs.getBoolean(3)) : null, cardId);
+        if (r == null) throw new IssuanceException("CARD_NOT_FOUND", "Card not found");
+        if (!"PRINTED".equals(r.status())) throw new IssuanceException("INVALID_STATUS", "Card status is " + r.status());
+        if (!r.pinSet()) throw new IssuanceException("INVALID_STATUS", "Set a PIN first");
+        if (YearMonth.parse(r.expiry(), YYMM).isBefore(YearMonth.now())) throw new IssuanceException("CARD_EXPIRED", "Card expired");
+        jdbc.update("UPDATE card SET status = 'ACTIVE', pin_tries = 0, activated_at = now(), version = version + 1 WHERE id = ?", cardId);
+        history(cardId, "PRINTED", "ACTIVE", "activated by the cardholder", actor);
+        retirePredecessor(cardId, actor);
+        audit(actor, "ACTIVATE_CARD", "card", cardId, "{\"channel\":\"" + safe(actor) + "\"}");
+        notifications.enqueue("CARD_ACTIVATED", cardId, null, java.util.Map.of(), 0);
+    }
+
     // =========================================================================
     // 4. CANCEL (print failure / operator)
     // =========================================================================
@@ -343,6 +366,7 @@ public class CardIssuanceService {
         if (List.of("LOST", "STOLEN").contains(reason) && LIVE_STATUSES.contains(o.status())) {
             jdbc.update("UPDATE card SET status = ?, version = version + 1 WHERE id = ?", reason, oldCardId);
             history(oldCardId, o.status(), reason, "reported " + reason.toLowerCase() + " at replacement", operator);
+            tokens.cardStatusChanged(oldCardId, reason, operator);
         }
 
         String pan;
@@ -387,13 +411,17 @@ public class CardIssuanceService {
         return new IssuedCard(cardId, pan, PanCrypto.mask(pan), expiry, productCode, "PENDING_PRINT");
     }
 
-    /** When a replacement is activated, the card it replaces stops working. */
+    /**
+     * When a replacement is activated, the card it replaces stops working, and its wallet tokens move to the new
+     * card (CMS-115).
+     */
     private void retirePredecessor(long cardId, String actor) {
         Long prev = jdbc.query("SELECT replaces_card_id FROM card WHERE id = ?",
                 rs -> rs.next() ? (Long) rs.getObject(1) : null, cardId);
         if (prev == null) return;
         String status = jdbc.query("SELECT status FROM card WHERE id = ? FOR UPDATE",
                 rs -> rs.next() ? rs.getString(1) : null, prev);
+        tokens.relink(prev, cardId, actor);
         if (status != null && LIVE_STATUSES.contains(status)) {
             jdbc.update("UPDATE card SET status = 'CANCELLED', version = version + 1 WHERE id = ?", prev);
             history(prev, status, "CANCELLED", "replaced by card " + cardId, actor);

@@ -19,6 +19,11 @@ cms:
       provider: ${CMS_SMS_PROVIDER:LOG}
     email:
       provider: ${CMS_EMAIL_PROVIDER:LOG}
+  tsp:                                # the in-process TSP simulator (/api/dev/tsp-sim)
+    base-url: ${CMS_TSP_URL:http://localhost:${server.port:8080}/api/dev/tsp-sim}
+    api-key: ${CMS_TSP_API_KEY:dev-tsp-sim-key}
+    inbound-api-key: ${CMS_TSP_INBOUND_API_KEY:dev-tsp-key}
+    poll-ms: 2000
   core-banking:                       # the in-process core banking simulator (/api/dev/core-sim)
     base-url: ${CMS_CORE_BANKING_URL:http://localhost:${server.port:8080}/api/dev/core-sim}
     api-key: ${CMS_CORE_BANKING_API_KEY:dev-core-key}

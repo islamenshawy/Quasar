@@ -6,6 +6,8 @@ import com.cms.core.CoreBankingClient.Posting;
 import com.cms.core.CoreSafService;
 import com.cms.core.CoreSafService.SafPayload;
 import com.cms.common.Settings;
+import com.cms.digital.ThreeDsService;
+import com.cms.digital.TokenService;
 import com.cms.emv.EmvService;
 import com.cms.emv.IssuerScriptService;
 import com.cms.fee.FeeService;
@@ -74,6 +76,8 @@ public class AuthorizationService {
     private final FeeService fees;
     private final NotificationService notifications;
     private final IssuerScriptService scripts;
+    private final TokenService tokens;
+    private final ThreeDsService threeDs;
     private final Settings settings;
     private final String acquirerZpkName;
     private final PinBlockFormat pinBlockFormat;
@@ -82,6 +86,7 @@ public class AuthorizationService {
                                 PinService pins, PayShieldClient hsm, KeyRepository keys, LedgerService ledger,
                                 EmvService emvService, CoreBankingClient core, CoreSafService saf, FraudService fraud, FeeService fees, Settings settings,
                                 NotificationService notifications, IssuerScriptService scripts,
+                                TokenService tokens, ThreeDsService threeDs,
                                 @Value("${cms.keys.corehost-zpk-name}") String acquirerZpkName,
                                 @Value("${cms.issuance.pin-block-format}") PinBlockFormat pinBlockFormat) {
         this.jdbc = jdbc;
@@ -98,6 +103,8 @@ public class AuthorizationService {
         this.fees = fees;
         this.notifications = notifications;
         this.scripts = scripts;
+        this.tokens = tokens;
+        this.threeDs = threeDs;
         this.settings = settings;
         this.acquirerZpkName = acquirerZpkName;
         this.pinBlockFormat = pinBlockFormat;
@@ -152,11 +159,19 @@ public class AuthorizationService {
         String d = checkCardAndAccount(r, c);
         if (d != null) return finish(txnId, d, reasonOf(d, c), c);
         if (fxRefusal != null) return finish(txnId, NOT_PERMITTED_CARDHOLDER, fxRefusal, c);
+        if (c.frozen) return finish(txnId, RESTRICTED_CARD, "card frozen by the cardholder", c);
+        if (c.international && !c.internationalEnabled && r.type() != TxnType.REFUND) {
+            return finish(txnId, NOT_PERMITTED_CARDHOLDER, "international use switched off", c);
+        }
+        Stop stop = checkToken(r, c, txnId);
+        if (stop != null) return finish(txnId, stop.code(), stop.reason(), c);
 
         d = checkTrackData(r, c);
         if (d != null) return finish(txnId, d, "track data / CVV mismatch", c);
         d = checkCvv2(r, c);
         if (d != null) return finish(txnId, SUSPECTED_COUNTERFEIT, d, c);
+        stop = checkThreeDs(r, c, txnId);
+        if (stop != null) return finish(txnId, stop.code(), stop.reason(), c);
 
         EmvService.Check emv = null;
         if (r.iccData() != null && !r.iccData().isBlank() && c.imkName != null) {
@@ -219,6 +234,7 @@ public class AuthorizationService {
                     INSERT INTO card_status_history (card_id, old_status, new_status, reason, changed_by)
                     VALUES (?, 'ACTIVE', 'BLOCKED', ?, ?)
                     """, c.cardId, clip("fraud rules " + String.join(",", v.rules())), SYSTEM_ACTOR);
+            tokens.cardStatusChanged(c.cardId, "BLOCKED", SYSTEM_ACTOR);
         }
         return finish(txnId, SUSPECTED_FRAUD, "fraud rules " + String.join(",", v.rules()) + " (score " + v.score() + ")", c);
     }
@@ -379,9 +395,45 @@ public class AuthorizationService {
         return null;
     }
 
+    private record Stop(String code, String reason) {}
+
+    /**
+     * Token payment (CMS-115): the scheme sends the card's PAN with the token it replaced (the token cryptogram is
+     * checked by the scheme on the issuer's behalf). The token must belong to the card and be ACTIVE.
+     */
+    private Stop checkToken(AuthRequest r, Ctx c, long txnId) {
+        if (r.tokenPan() == null || r.tokenPan().isBlank()) return null;
+        TokenService.PaymentToken t = tokens.forPayment(r.tokenPan());
+        if (t == null) return new Stop(INVALID_CARD, "unknown token");
+        if (t.cardId() != c.cardId) return new Stop(INVALID_CARD, "token not linked to this card");
+        jdbc.update("UPDATE iso_transaction SET token_id = ? WHERE id = ?", t.id(), txnId);
+        if (!"ACTIVE".equals(t.status())) return new Stop(NOT_PERMITTED_CARDHOLDER, "token " + t.status());
+        c.tokenId = t.id();
+        tokens.used(t.id());
+        return null;
+    }
+
+    /**
+     * 3-D Secure (CMS-115): a CAVV, when present, must verify and belong to an unused successful authentication
+     * of this card; a product that requires 3-D Secure declines e-commerce without one (token payments aside).
+     */
+    private Stop checkThreeDs(AuthRequest r, Ctx c, long txnId) {
+        if (r.channel() != Channel.ECOM || !hasAmount(r.type()) || r.type() == TxnType.REFUND || r.type() == TxnType.COMPLETION) {
+            return null;
+        }
+        if (r.cavv() != null && !r.cavv().isBlank()) {
+            String txnCcy = r.currencyNumeric() == null ? c.currency : jdbc.query("SELECT code FROM currency WHERE numeric_code = ?",
+                    rs -> rs.next() ? rs.getString(1) : c.currency, r.currencyNumeric());
+            String why = threeDs.verifyForPayment(r.cavv(), r.eci(), c.cardId, r.pan(), c.cavvKey, r.amount(), txnCcy, txnId);
+            return why == null ? null : new Stop(SUSPECTED_COUNTERFEIT, why);
+        }
+        if (c.tdsRequired && c.tokenId == null) return new Stop(NOT_PERMITTED_CARDHOLDER, "3-D Secure authentication required");
+        return null;
+    }
+
     /** Card-not-present: the CVV2 (service code 000) when sent, and required when the product says so. */
     private String checkCvv2(AuthRequest r, Ctx c) {
-        if (r.channel() != Channel.ECOM) return null;
+        if (r.channel() != Channel.ECOM || c.tokenId != null) return null;
         if (r.cvv2() == null || r.cvv2().isBlank()) return c.verifyCvv2 ? "CVV2 required" : null;
         if (!r.cvv2().matches("[0-9]{3,4}")) return "CVV2 format";
         return hsm.verifyCvv(keys.requireActiveKey(c.cvkName), r.cvv2(), r.pan(), c.expiry, "000") ? null : "CVV2 mismatch";
@@ -392,7 +444,8 @@ public class AuthorizationService {
         if (!"CONTACTLESS".equals(r.entryMode()) || !hasAmount(r.type())) return null;
         if (!c.contactlessEnabled) return NOT_PERMITTED_CARDHOLDER;
         if (c.ctlsTxnLimit != null && c.amt > c.ctlsTxnLimit) return EXCEEDS_AMOUNT_LIMIT;
-        if (!r.hasPin()) {
+        // a wallet token verified the cardholder on the phone (CDCVM): no PIN limits
+        if (!r.hasPin() && c.tokenId == null) {
             if (c.ctlsCvmLimit != null && c.amt > c.ctlsCvmLimit) return PIN_REQUIRED;
             if (c.ctlsCumulativeLimit != null && c.noCvmTotal + c.amt > c.ctlsCumulativeLimit) return PIN_REQUIRED;
         }
@@ -806,13 +859,14 @@ public class AuthorizationService {
         return jdbc.queryForObject("""
                 INSERT INTO iso_transaction (mti, processing_code, stan, rrn, transmission_dt, local_dt, acquirer_id,
                     terminal_id, pan_last4, txn_type, amount, currency_code, channel, is_advice, merchant_type,
-                    card_acceptor, original_key, raw_request_masked, acquirer_country, entry_mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                    card_acceptor, original_key, raw_request_masked, acquirer_country, entry_mode, eci)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
                 """, Long.class, r.mti(), r.processingCode(), r.stan(), r.rrn(), r.transmissionDt(), r.localDt(),
                 r.acquirerId(), r.terminalId(), last4, r.type().name(), r.amount(), currency, r.channel().name(),
                 r.advice(), r.merchantType(), r.cardAcceptor(), r.original() == null ? null : r.original().key(),
                 r.toString(), r.acquirerCountry() != null && r.acquirerCountry().matches("\\d{3}") ? r.acquirerCountry() : null,
-                r.entryMode() != null && r.entryMode().matches("[A-Z]{3,12}") ? r.entryMode() : null);
+                r.entryMode() != null && r.entryMode().matches("[A-Z]{3,12}") ? r.entryMode() : null,
+                r.eci() != null && r.eci().matches("[0-9]{2}") ? r.eci() : null);
     }
 
     private AuthResponse approve(long txnId, Ctx c, long fee, UUID journal) {
@@ -1002,6 +1056,9 @@ public class AuthorizationService {
         boolean contactlessEnabled, verifyCvv2;
         Long ctlsTxnLimit, ctlsCvmLimit, ctlsCumulativeLimit;
         long noCvmTotal;
+        boolean frozen, internationalEnabled, tdsRequired;
+        String cavvKey;
+        Long tokenId;               // set by checkToken for a token payment
     }
 
     private static final String CTX_SELECT = """
@@ -1018,7 +1075,7 @@ public class AuthorizationService {
                    a.account_number, p.core_stip_limit, p.code, k.created_at, k.fraud_exempt_until,
                    p.fee_plan_code, p.fx_allowed, p.imk_smi_key_name, p.contactless_enabled AND k.contactless_enabled,
                    p.contactless_txn_limit, p.contactless_cvm_limit, p.contactless_cumulative_limit, k.contactless_no_cvm_total,
-                   p.verify_cvv2
+                   p.verify_cvv2, k.frozen, k.international_enabled, p.tds_required, p.cavv_key_name
               FROM card k
               JOIN card_product p ON p.id = k.product_id
               JOIN account a      ON a.id = k.account_id
@@ -1106,6 +1163,10 @@ public class AuthorizationService {
         c.ctlsCumulativeLimit = (Long) rs.getObject(49);
         c.noCvmTotal = rs.getLong(50);
         c.verifyCvv2 = rs.getBoolean(51);
+        c.frozen = rs.getBoolean(52);
+        c.internationalEnabled = rs.getBoolean(53);
+        c.tdsRequired = rs.getBoolean(54);
+        c.cavvKey = rs.getString(55);
         return c;
     }
 

@@ -41,6 +41,8 @@ public class DevAuthController {
                 ((Number) body.get("createdDaysAgo")).intValue(), id);
         if (body.get("activatedDaysAgo") != null) jdbc.update("UPDATE card SET activated_at = now() - make_interval(days => ?) WHERE id = ?",
                 ((Number) body.get("activatedDaysAgo")).intValue(), id);
+        // e.g. PRINTED: a centrally produced card on its way to the cardholder
+        if (body.get("status") != null) jdbc.update("UPDATE card SET status = ? WHERE id = ?", String.valueOf(body.get("status")), id);
         return jdbc.queryForMap("SELECT id, expiry_yymm, created_at, status FROM card WHERE id = ?", id);
     }
 

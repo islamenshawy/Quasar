@@ -24,6 +24,8 @@ import java.util.function.Function;
  *   reversal: field 56 = original MTI(4) + STAN(6) + local date-time(12) + acquirer id (LL + n..11);
  *            field 30 positions 1-12 = original amount, field 4 = amount actually completed (partial)
  *   field 55: chip data (hex) to the engine; the response carries tag 91 (ARPC + ARC) when the ARQC was checked
+ *   field 48: tagged values, each tag + value: CV2 + 3-4 digits (CVV2), TKN + LL + token number (token payment),
+ *            CAV + 40 hex (3-D Secure CAVV), ECI + 2 digits
  *   field 54 in responses: per amount 20 chars = account type(2) + amount type(2: 01 ledger, 02 available)
  *            + currency(3) + C/D + amount(12)
  * Repeat MTIs (xxx1) are normalised to xxx0 so duplicates match the original message.
@@ -91,7 +93,10 @@ public final class IsoMapper {
                 m.hasField(55) ? ISOUtil.hexString(m.getBytes(55)) : null,
                 blankToNull(m.getString(19)),
                 entryMode(m.getString(22), channel),
-                cvv2(m.getString(48)));
+                cvv2(m.getString(48)),
+                token(m.getString(48)),
+                tagged(m.getString(48), "CAV([0-9A-Fa-f]{40})"),
+                tagged(m.getString(48), "ECI([0-9]{2})"));
     }
 
     /** Response to a financial / authorization / reversal message: echoes the keys, adds 38, 39, 54. */
@@ -187,6 +192,21 @@ public final class IsoMapper {
         if (f48 == null) return null;
         java.util.regex.Matcher x = java.util.regex.Pattern.compile("CV2([0-9]{3,4})").matcher(f48);
         return x.find() ? x.group(1) : null;
+    }
+
+    /** Token number in field 48 as "TKN" + 2-digit length + digits. PROVISIONAL (IN-01 / IN-08). */
+    static String token(String f48) {
+        if (f48 == null) return null;
+        java.util.regex.Matcher x = java.util.regex.Pattern.compile("TKN([0-9]{2})([0-9]+)").matcher(f48);
+        if (!x.find()) return null;
+        int n = Integer.parseInt(x.group(1));
+        return n >= 13 && n <= 19 && x.group(2).length() >= n ? x.group(2).substring(0, n) : null;
+    }
+
+    static String tagged(String f48, String regex) {
+        if (f48 == null) return null;
+        java.util.regex.Matcher x = java.util.regex.Pattern.compile(regex).matcher(f48);
+        return x.find() ? x.group(1).toUpperCase() : null;
     }
 
     private static String blankToNull(String s) {

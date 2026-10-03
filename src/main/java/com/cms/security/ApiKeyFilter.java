@@ -20,6 +20,8 @@ import java.util.List;
  *   <li>/api/dexxis/   Dexxis kiosk            (cms.dexxis.api-key)        role DEXXIS</li>
  *   <li>/api/channel/  ACS / mobile / IVR      (cms.channel.api-key)       role CHANNEL</li>
  *   <li>/api/dev/core-sim/  the CMS calling its own dev core banking simulator (cms.core-banking.api-key) role CORE</li>
+ *   <li>/api/tsp/      token service provider  (cms.tsp.inbound-api-key)   role TSP</li>
+ *   <li>/api/dev/tsp-sim/   the CMS calling its own dev TSP simulator (cms.tsp.api-key) role TSPSIM</li>
  * </ul>
  * A prefix with no key configured refuses API-key calls. Network controls (mTLS / allow-list, CMS-062) still apply.
  */

@@ -9,6 +9,7 @@ import com.cms.card.IssuanceException;
 import com.cms.common.AuditLog;
 import com.cms.common.Settings;
 import com.cms.core.CoreSafService;
+import com.cms.digital.TokenService;
 import com.cms.emv.IssuerScriptService;
 import com.cms.fee.FeeService;
 import com.cms.fraud.FraudService;
@@ -50,12 +51,13 @@ public class ApprovalActions {
     public record FxRateSave(FeeService.FxRate rate) {}
     public record TemplateSave(NotificationService.Template template) {}
     public record ChipScript(long cardId, String command, String value, String reason) {}
+    public record TokenLifecycle(long tokenId, String action, String reason) {}
 
     public ApprovalActions(ApprovalService approvals, ReferenceDataService ref, Settings settings,
                            LedgerService ledger, CardAdminService cards, CustomerService customers,
                            AccountService accounts, AuditLog audit, CardIssuanceService issuance, BatchService batch,
                            CoreSafService saf, FraudService fraud, FeeService fees,
-                           NotificationService notifications, IssuerScriptService scripts) {
+                           NotificationService notifications, IssuerScriptService scripts, TokenService tokens) {
         approvals.register("CURRENCY_SAVE", CurrencySave.class, (p, op) -> ref.saveCurrency(p.code(), p.data(), p.create(), op));
         approvals.register("SEGMENT_SAVE", SegmentSave.class, (p, op) -> ref.saveSegment(p.code(), p.data(), p.create(), op));
         approvals.register("ACCOUNT_TYPE_SAVE", AccountTypeSave.class, (p, op) -> ref.saveAccountType(p.code(), p.data(), p.create(), op));
@@ -98,5 +100,6 @@ public class ApprovalActions {
         approvals.register("FX_RATE_SAVE", FxRateSave.class, (p, op) -> fees.saveFxRate(p.rate(), op));
         approvals.register("NOTIFICATION_TEMPLATE_SAVE", TemplateSave.class, (p, op) -> notifications.saveTemplate(p.template(), op));
         approvals.register("CHIP_SCRIPT", ChipScript.class, (p, op) -> scripts.queue(p.cardId(), p.command(), p.value(), p.reason(), op));
+        approvals.register("TOKEN_LIFECYCLE", TokenLifecycle.class, (p, op) -> tokens.issuerAction(p.tokenId(), p.action(), p.reason(), op));
     }
 }

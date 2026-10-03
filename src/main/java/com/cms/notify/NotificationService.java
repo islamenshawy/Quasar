@@ -37,8 +37,8 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
     public static final List<String> EVENTS = List.of("TXN_APPROVED", "TXN_DECLINED", "CARD_ISSUED", "CARD_ACTIVATED",
-            "CARD_STATUS", "FRAUD_ALERT", "OTP");
-    private static final List<String> SECURITY = List.of("CARD_STATUS", "FRAUD_ALERT", "OTP");
+            "CARD_STATUS", "FRAUD_ALERT", "OTP", "TOKEN_ADDED");
+    private static final List<String> SECURITY = List.of("CARD_STATUS", "FRAUD_ALERT", "OTP", "TOKEN_ADDED");
     private static final int MAX_ATTEMPTS = 6;
     private static final Pattern VAR = Pattern.compile("\\{\\{(\\w+)}}");
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("dd MMM HH:mm");

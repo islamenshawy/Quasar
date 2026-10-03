@@ -51,7 +51,8 @@ public class CorehostSimulator {
                              Long amount, String currency, String terminalId, String acquirerId, String mcc,
                              String merchant, String originalRef, Long amountCompleted, Boolean advice,
                              Boolean repeat, Boolean chip, Integer atc, Boolean tamperArqc, String tvr,
-                             String country, Boolean contactless, String cvv2, Boolean failScripts) {}
+                             String country, Boolean contactless, String cvv2, Boolean failScripts,
+                             String tokenRef, String cavv, String eci) {}
 
     public record SimResult(String ref, String mti, Map<String, String> request, Map<String, String> response,
                             String actionCode, String actionText, boolean approved, Long ledgerBalance,
@@ -167,7 +168,16 @@ public class CorehostSimulator {
         // position 7, card data input mode (provisional, IN-01): 5 chip, M contactless, 2 magnetic stripe
         char input = Boolean.TRUE.equals(r.contactless()) ? 'M' : Boolean.TRUE.equals(r.chip()) ? '5' : '2';
         m.set(22, channel.equals("ECOM") ? "100010000000" : "210101" + input + "10000");
-        if (r.cvv2() != null && r.cvv2().matches("[0-9]{3,4}")) m.set(48, "CV2" + r.cvv2());
+        // field 48 tags (provisional, IN-01 / IN-08): CVV2, wallet token, 3-D Secure CAVV and ECI
+        StringBuilder f48 = new StringBuilder();
+        if (r.cvv2() != null && r.cvv2().matches("[0-9]{3,4}")) f48.append("CV2").append(r.cvv2());
+        if (r.tokenRef() != null && !r.tokenRef().isBlank()) {
+            String token = com.cms.api.DevTspController.tokenPan(r.tokenRef().trim());
+            f48.append("TKN").append(String.format("%02d", token.length())).append(token);
+        }
+        if (r.cavv() != null && r.cavv().matches("[0-9A-Fa-f]{40}")) f48.append("CAV").append(r.cavv().toUpperCase());
+        if (r.eci() != null && r.eci().matches("[0-9]{2}")) f48.append("ECI").append(r.eci());
+        if (f48.length() > 0) m.set(48, f48.toString());
         m.set(26, r.mcc() != null ? r.mcc() : channel.equals("ATM") ? "6011" : "5411");
         m.set(32, acquirer);
         if (r.country() != null && r.country().matches("[0-9]{3}")) m.set(19, r.country());

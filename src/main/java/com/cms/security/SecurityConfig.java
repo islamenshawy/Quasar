@@ -43,6 +43,8 @@ import java.util.Map;
  *
  *   console / scripts   session cookie after POST /api/auth/login (CSRF protected), or HTTP Basic
  *   Dexxis              X-Api-Key header (role DEXXIS), /api/dexxis/** only
+ *   ACS / app back end  X-Api-Key header (role CHANNEL), /api/channel/** only
+ *   token service       X-Api-Key header (role TSP), /api/tsp/** only
  *   public              console files, /api/version, /api/admin/hsm/health, /api/auth/login, /api/auth/csrf
  *
  *   GET  /api/admin/**                 any role
@@ -83,7 +85,9 @@ public class SecurityConfig {
     SecurityFilterChain filterChain(HttpSecurity http, ObjectMapper json, SecurityContextRepository contexts,
                                     @Value("${cms.dexxis.api-key:}") String dexxisKey,
                                     @Value("${cms.channel.api-key:}") String channelKey,
-                                    @Value("${cms.core-banking.api-key:}") String coreKey) throws Exception {
+                                    @Value("${cms.core-banking.api-key:}") String coreKey,
+                                    @Value("${cms.tsp.inbound-api-key:}") String tspInboundKey,
+                                    @Value("${cms.tsp.api-key:}") String tspKey) throws Exception {
         CookieCsrfTokenRepository csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
         csrfRepo.setCookieCustomizer(c -> c.sameSite("Lax"));
         http
@@ -93,7 +97,9 @@ public class SecurityConfig {
                     // scripts (Authorization header) and Dexxis (API key) do not use cookies
                     .ignoringRequestMatchers(r -> r.getHeader("Authorization") != null
                             || r.getRequestURI().startsWith("/api/dexxis/") || r.getRequestURI().startsWith("/api/channel/")
-                            || r.getHeader("X-Api-Key") != null && r.getRequestURI().startsWith("/api/dev/core-sim/")))
+                            || r.getRequestURI().startsWith("/api/tsp/")
+                            || r.getHeader("X-Api-Key") != null && (r.getRequestURI().startsWith("/api/dev/core-sim/")
+                                    || r.getRequestURI().startsWith("/api/dev/tsp-sim/"))))
             .httpBasic(b -> b.authenticationEntryPoint((req, res, e) -> error(res, json, 401, "UNAUTHENTICATED", "Sign in required")))
             .exceptionHandling(e -> e
                     .authenticationEntryPoint((req, res, ex) -> error(res, json, 401, "UNAUTHENTICATED", "Sign in required"))
@@ -103,7 +109,9 @@ public class SecurityConfig {
             .addFilterBefore(new ApiKeyFilter(List.of(
                     new ApiKeyFilter.Rule("/api/dexxis/", dexxisKey, "DEXXIS"),
                     new ApiKeyFilter.Rule("/api/channel/", channelKey, "CHANNEL"),
-                    new ApiKeyFilter.Rule("/api/dev/core-sim/", coreKey, "CORE"))), BasicAuthenticationFilter.class)
+                    new ApiKeyFilter.Rule("/api/dev/core-sim/", coreKey, "CORE"),
+                    new ApiKeyFilter.Rule("/api/tsp/", tspInboundKey, "TSP"),
+                    new ApiKeyFilter.Rule("/api/dev/tsp-sim/", tspKey, "TSPSIM"))), BasicAuthenticationFilter.class)
             .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
             .addFilterAfter(new PasswordChangeFilter(json), BasicAuthenticationFilter.class)
             .authorizeHttpRequests(a -> a
@@ -112,6 +120,8 @@ public class SecurityConfig {
                     .requestMatchers("/api/dexxis/**").hasRole("DEXXIS")
                     .requestMatchers("/api/channel/**").hasRole("CHANNEL")
                     .requestMatchers("/api/dev/core-sim/**").hasAnyRole("CORE", "ADMIN", "SUPERVISOR", "OPERATOR")
+                    .requestMatchers("/api/tsp/**").hasRole("TSP")
+                    .requestMatchers("/api/dev/tsp-sim/**").hasAnyRole("TSPSIM", "ADMIN", "SUPERVISOR", "OPERATOR")
                     .requestMatchers("/api/auth/**").authenticated()
                     .requestMatchers("/api/dev/**").hasAnyRole(WRITERS)
                     .requestMatchers("/api/admin/users/**").hasRole("ADMIN")
